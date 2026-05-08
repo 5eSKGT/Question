@@ -33,6 +33,7 @@ class PortfolioState:
     signals: list[Signal] = field(default_factory=list)
     messages: list[TradeMessage] = field(default_factory=list)
     last_oos: dict[str, Any] = field(default_factory=dict)
+    last_screen: dict[str, Any] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     # ---- mutators ----------------------------------------------------- #

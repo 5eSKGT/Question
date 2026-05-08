@@ -539,9 +539,14 @@ class AlphaPulseWindow(QMainWindow):
                      "#0c248c" if st == "PENDING" else GRAY)
         self.oos_status.setText(st)
         self.oos_status.setStyleSheet(f"color:{oos_color};")
-        self.oos_detail.setText(
-            f"SR={oos.get('sharpe', 0):.2f}  PSR={oos.get('psr', 0):.2f}  "
-            f"DSR={oos.get('dsr', 0):.2f}  attempts={oos.get('attempts', 0)}")
+        screen = self.portfolio.last_screen or {}
+        oos_line = (f"SR={oos.get('sharpe', 0):.2f}  PSR={oos.get('psr', 0):.2f}  "
+                     f"DSR={oos.get('dsr', 0):.2f}  attempts={oos.get('attempts', 0)}")
+        if screen:
+            oos_line += (f"\n유니버스 {screen.get('universe', '?')} → "
+                          f"필터 {screen.get('prefiltered', '?')} → "
+                          f"픽 {screen.get('picks', 0)}")
+        self.oos_detail.setText(oos_line)
 
         # halt card
         if self.portfolio.halted:

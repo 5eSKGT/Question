@@ -151,8 +151,18 @@ class TradingEngine:
         scored = self.screener.run(
             prefiltered, self._ohlcv, self._quote_volume,
             funding_rate_provider=self._funding_rate)
-        log.info(f"screener picked {len(scored)} symbols")
+        log.info(
+            f"cycle {self._cycle_count}: universe={len(universe)} "
+            f"prefiltered={len(prefiltered)} picks={len(scored)} "
+            f"(symbols: {[r.symbol for r in scored[:5]]}{'…' if len(scored)>5 else ''})")
         self._emit("screened", len(scored), len(prefiltered))
+        # Mirror to portfolio so the GUI can show universe vs picks live
+        self.portfolio.last_screen = {
+            "universe": len(universe),
+            "prefiltered": len(prefiltered),
+            "picks": len(scored),
+            "pick_symbols": [r.symbol for r in scored],
+        }
 
         # ---- signal pass per symbol ---------------------------------- #
         for r in scored:

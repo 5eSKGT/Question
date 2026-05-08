@@ -115,6 +115,7 @@ class StrategySimulator:
         bar_pnl = np.zeros(n_bars, dtype=float)
         bars_with_position = 0
         active_picks: dict[str, str] = {}        # symbol -> screener side
+        rescreen_history: list[tuple[int, int, int]] = []   # (rescreen_idx, candidates, picks)
 
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
 
@@ -132,6 +133,10 @@ class StrategySimulator:
                     quote_volume_provider=lambda s: 1e12,
                 )
                 active_picks = {r.symbol: r.side for r in results}
+                rescreen_history.append((
+                    (t - warmup_bars) // self.rescreen_every,
+                    len(symbols), len(results),
+                ))
 
             # ---- iterate symbols (cheap: only O(1) per symbol now) ----- #
             for sym in symbols:
@@ -252,8 +257,29 @@ class StrategySimulator:
             ))
 
         exposure = bars_with_position / max(n_bars - warmup_bars, 1)
+
+        # Telemetry — universe size vs per-cycle targets, so the user can
+        # confirm the screener is actually firing (and not just rejecting
+        # everything in the candidate pool).
+        if rescreen_history:
+            picks = [p for _, _, p in rescreen_history]
+            telemetry = {
+                "universe_size": rescreen_history[0][1],
+                "rescreen_count": len(rescreen_history),
+                "picks_total": sum(picks),
+                "picks_mean":  float(sum(picks) / len(picks)),
+                "picks_max":   int(max(picks)),
+                "picks_zero_cycles": int(sum(1 for p in picks if p == 0)),
+            }
+        else:
+            telemetry = {"universe_size": len(symbols),
+                          "rescreen_count": 0, "picks_total": 0,
+                          "picks_mean": 0.0, "picks_max": 0,
+                          "picks_zero_cycles": 0}
+
         return {
             "bar_returns": bar_pnl[warmup_bars:],
             "trades": trades,
             "exposure": float(exposure),
+            "telemetry": telemetry,
         }

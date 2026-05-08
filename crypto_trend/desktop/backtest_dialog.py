@@ -134,7 +134,8 @@ class BacktestWorker(QThread):
                     taker_fee=self.p["taker_fee"],
                     slippage_bps=self.p["slippage_bps"],
                 )
-                self.log.emit("  running AlphaPulse walk-forward …")
+                self.log.emit(f"  running AlphaPulse walk-forward "
+                                f"(universe={len(candles)} symbols) …")
                 wf = walk_forward_run(candles, train_bars=train_bars,
                                        test_bars=test_bars, simulator=sim)
 
@@ -164,6 +165,13 @@ class BacktestWorker(QThread):
                     f"sr={wf.metrics.annualized_sharpe:+.2f} "
                     f"mdd={wf.metrics.max_drawdown:+.3%} "
                     f"trades={wf.metrics.n_trades:.0f}")
+                tele = getattr(wf, "telemetry", {}) or {}
+                if tele.get("rescreen_count"):
+                    self.log.emit(
+                        f"  ▸ universe={tele.get('universe_size', '?')} symbols, "
+                        f"rescreen cycles={tele['rescreen_count']}, "
+                        f"avg picks/cycle={tele['picks_mean']:.2f}, "
+                        f"empty cycles={tele['picks_zero_cycles']}")
 
             # ---- aggregate ------------------------------------------ #
             cols = ["return", "sharpe", "sortino", "mdd", "calmar",

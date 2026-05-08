@@ -23,6 +23,7 @@ class WalkForwardResult:
     per_window: list[BacktestMetrics] = field(default_factory=list)
     trades: list[Trade] = field(default_factory=list)
     bar_returns: np.ndarray = field(default_factory=lambda: np.array([]))
+    telemetry: dict = field(default_factory=dict)
 
 
 def walk_forward_run(
@@ -43,6 +44,10 @@ def walk_forward_run(
     per_window: list[BacktestMetrics] = []
     bars_with_position_total = 0
     bars_total = 0
+    telemetry_acc = {
+        "universe_size": 0, "rescreen_count": 0, "picks_total": 0,
+        "picks_zero_cycles": 0,
+    }
 
     start = train_bars
     while start + test_bars <= n:
@@ -62,7 +67,19 @@ def walk_forward_run(
             rets, [t.pnl for t in trades_window],
             [float(t.bars_held) for t in trades_window],
             out["exposure"]))
+        # accumulate screener telemetry from this window
+        t_win = out.get("telemetry", {})
+        if t_win:
+            telemetry_acc["universe_size"] = t_win.get(
+                "universe_size", telemetry_acc["universe_size"])
+            telemetry_acc["rescreen_count"] += t_win.get("rescreen_count", 0)
+            telemetry_acc["picks_total"] += t_win.get("picks_total", 0)
+            telemetry_acc["picks_zero_cycles"] += t_win.get("picks_zero_cycles", 0)
         start += step
+
+    telemetry_acc["picks_mean"] = (
+        telemetry_acc["picks_total"] / telemetry_acc["rescreen_count"]
+        if telemetry_acc["rescreen_count"] else 0.0)
 
     flat_rets = (np.concatenate(bar_returns_all)
                   if bar_returns_all else np.array([]))
@@ -79,4 +96,5 @@ def walk_forward_run(
         per_window=per_window,
         trades=trades_all,
         bar_returns=flat_rets,
+        telemetry=telemetry_acc,
     )
