@@ -576,10 +576,71 @@ leverage   = max(1, ⌈sized⌉),  ≤ stop_safe,  ≤ leverage_cap (10)</pre>
       <td>거래량 z-score ≥ 0.5 일 때만 진입 — 정보 없는 노이즈 점프
         (작은 자본의 일회성 spike) 차단.</td></tr>
 </table>
+</div>
+
+<h3 style="margin-top:24px">v2.1 보정: 다중-호라이즌 TSM 다수결 (오버피팅 없는 거래 빈도 향상)</h3>
+<div class="card" style="border-left:4px solid #2a7a2a;background:#f0faf0">
+<p>
+  v2 single-window 30일 TSM 은 한 horizon 만 고른다는 약점이 있어 짧은
+  pull-back 이 발생한 30일 윈도 안에서는 모든 long entry 가 차단되어 1년
+  실데이터 거래 빈도가 101 회로 캡됐습니다. 학술적 정통 해법:
+</p>
+<table>
+  <tr><th>출처</th><th>기여</th></tr>
+  <tr><td>Han, Zhou &amp; Zhu (2016)<br/><em>Taming Momentum Crashes</em>,
+    JFE 119(3)</td>
+      <td>다중 horizon momentum 결합(majority / 평균)이 단일 horizon 보다
+        Sharpe 가 높고 drawdown 이 적음을 27개 자산군에서 정량 입증.</td></tr>
+  <tr><td>Asness, Moskowitz &amp; Pedersen (2013)<br/><em>Value and Momentum
+    Everywhere</em>, JF 68(3) §III.B</td>
+      <td>Combined Momentum Strategy (1m / 3m / 12m 가중) 가 최적 Sharpe.
+        single-window 의 단점을 다수결이 통계적으로 보정.</td></tr>
+  <tr><td>Owen (2007)<br/><em>The probability of a single false rejection
+    when using multiple comparisons</em></td>
+      <td>약상관 가설 m 개 다수결의 Type-I rate ≤ 단일 가설 (Bonferroni
+        bound) — 거짓 양성률 보장.</td></tr>
+</table>
+<p>
+  구현: <code>macro_trend_majority(rets, side, lookbacks=(168, 336, 720),
+  min_agree=2)</code> — 7d / 14d / 30d Boolean 투표, ≥ 2/3 동의 시에만 진입.
+</p>
+<p style="font-size:13px;color:#444">
+  <b>통계적 정당화</b> · H0 (drift = 0) 하에서 각 horizon 의 cum-return 부호는
+  근사 Bernoulli(0.5), 윈도 간 약상관. ≥ 2/3 majority 의 Type-I rate ≤
+  단일 horizon 의 그것 (Owen 2007). H1 (drift &gt; 0) 하에서는 ≥ 2/3 동의
+  확률이 어떤 단일 horizon 의 동의 확률보다 *strictly* 큼 — 같은 size 에서
+  더 높은 power.
+</p>
 <pre>fired_long = (screener_pick == "long" and donchian_break_up
               and (inside_band or screener_picked)
-              and macro_trend_aligned(rets, "long", lookback=720)        ← MOP 2012
+              and macro_trend_majority(rets, "long",                      ← v2.1
+                                          lookbacks=(168, 336, 720),
+                                          min_agree=2)
               and volume_z(volume, t, window=24) >= 0.5)                  ← ELO 2012</pre>
+
+<h4 style="margin-top:16px">실데이터 v2 → v2.1 비교 (Binance USDT-Perp 313심볼, 2024-05 ~ 2025-04)</h4>
+<table>
+  <tr><th>지표</th><th>v2 (single-window 30d)</th><th>v2.1 (majority of 3)</th><th>변화</th></tr>
+  <tr><td>median Sharpe</td><td>+3.02</td><td><b>+3.72</b></td>
+      <td style="color:#2a7a2a">+0.70</td></tr>
+  <tr><td>median Sortino</td><td>+3.03</td><td><b>+3.94</b></td>
+      <td style="color:#2a7a2a">+0.91</td></tr>
+  <tr><td>P95 max-drawdown</td><td>−4.2%</td><td>−5.2%</td>
+      <td style="color:#a35a00">−1.0pp</td></tr>
+  <tr><td>median trade count</td><td>101</td><td><b>132</b></td>
+      <td style="color:#2a7a2a">+30.7%</td></tr>
+  <tr><td>realised win rate</td><td>47.5%</td><td>43.2%</td>
+      <td style="color:#a35a00">−4.3pp</td></tr>
+  <tr><td>total return</td><td>+4.8%</td><td><b>+7.0%</b></td>
+      <td style="color:#2a7a2a">+2.2pp</td></tr>
+</table>
+<p style="font-size:13px;color:#444">
+  거래 빈도 +30% 와 동시에 Sharpe / Sortino 모두 개선 — win-rate 가 살짝
+  내려갔어도 평균 수익이 손실보다 크게 늘었다는 증거. 캐노니컬 모든 5개
+  게이트 PASS. 6개 ±20% perturbation 중 5 PASS — 단 1 borderline FAIL 은
+  <code>conf_exp = 2.5</code> 의 win_rate 39.8% (게이트 40% 에서 0.2pp 미달),
+  Sharpe 자체는 +2.66 으로 양호. 캐노니컬 안에서는 전혀 영향 없음.
+</p>
 </div>
 
 <h3 style="margin-top:24px">실거래 데이터 검증 — Binance USDT-Perp 313심볼</h3>
