@@ -446,6 +446,29 @@ agree(h) = sign( pre_jump[-h:].sum() ) == sign(L_t)
 </p>
 </div>
 
+<h3>스크리너 ↔ 전략 진입 게이트 — 자가모순 해소</h3>
+<div class="card" style="border-left:4px solid var(--accent);background:#eef3ff">
+<p>
+  과거 버그 — Yang-Zhang <code>inside_band</code> 게이트가 <em>모든</em> 진입
+  조건의 AND 인자로 들어 있어서, 스크리너가 픽한 점프(정의상 비정상으로 큰 봉)
+  가 항상 <code>inside_band = False</code> 가 되어 진입이 영구 차단되었습니다.
+  스크리너가 픽한 그 점프 자체가 진입을 막는 자가모순이었습니다.
+</p>
+<p><b>해결</b>:</p>
+<ul>
+  <li><code>screener_side</code> 가 주어진 경우 (스크리너가 LM·다중 horizon·
+    Hurst·vol regime·funding 모두 검증 완료) → <code>inside_band</code>
+    게이트 스킵.</li>
+  <li>강력 점프 (<code>|L| ≥ direct_entry_lm</code>) → 동일하게 스킵 (직접 진입).</li>
+  <li>두 조건 모두 없는 경우 (HIST replay, screener_side=None, 약한 봉) →
+    <code>inside_band</code> 가 노이즈 필터로 정상 작동.</li>
+</ul>
+<p>
+  결과: 스크리너 픽이 의도대로 차트에 A/B/C 마커로 나타납니다. 단위 테스트
+  <code>tests/test_pick_to_signal.py</code> 가 이 컨트랙트를 잠가둡니다.
+</p>
+</div>
+
 <h3>전략과의 정합성</h3>
 <div class="card">
 <p>

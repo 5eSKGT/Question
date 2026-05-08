@@ -224,8 +224,31 @@ class StrategySimulator:
                 broke_dn = close < lo_prev
                 inside_band = band == 0 or abs(close - pc.closes[t - 1]) <= band
 
-                fire_long = want == "long" and broke_up and inside_band
-                fire_short = want == "short" and broke_dn and inside_band
+                # Strong-jump direct entry + screener-already-validated
+                # bypass: see strategy/trend_following.py for the full
+                # rationale. In short, requiring the bar to sit inside
+                # the YZ band when the screener picked it precisely
+                # because the bar BROKE the normal range is a
+                # self-contradiction that previously zeroed out entries.
+                from ..screener.winner_loser import lee_mykland_statistic
+                pre_rets_for_lm = pc.log_rets[: t]
+                lm_for_gate = lee_mykland_statistic(pre_rets_for_lm, window=24)
+                strong_jump = abs(lm_for_gate) >= p.direct_entry_lm
+                # The simulator only enters on screener-confirmed
+                # symbols (active_picks), so noise_filter_required is
+                # always False here.
+                noise_filter_required = False
+
+                fire_long = (
+                    want == "long"
+                    and (broke_up or (strong_jump and lm_for_gate > 0))
+                    and (inside_band or not noise_filter_required)
+                )
+                fire_short = (
+                    want == "short"
+                    and (broke_dn or (strong_jump and lm_for_gate < 0))
+                    and (inside_band or not noise_filter_required)
+                )
                 if not (fire_long or fire_short):
                     continue
 

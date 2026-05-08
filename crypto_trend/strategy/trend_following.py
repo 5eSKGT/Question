@@ -189,10 +189,32 @@ class TrendFollowingStrategy:
                 lm_pre = lee_mykland_statistic(pre, window=24)
                 strong_jump = abs(lm_pre) >= self.p.direct_entry_lm
 
-                fired_long = want == "long" and inside_band and (
-                    broke_up or (strong_jump and lm_pre > 0))
-                fired_short = want == "short" and inside_band and (
-                    broke_dn or (strong_jump and lm_pre < 0))
+                # The Yang-Zhang inside_band gate exists to filter
+                # *noise spikes* on otherwise-quiet symbols — when no
+                # screener context is given we don't know if a 1-bar
+                # outlier is a real signal or a fat-finger. But when
+                # `screener_side` is provided, the screener's LM /
+                # multi-horizon / Hurst / vol-regime / funding filters
+                # have ALREADY validated the move. Re-applying YZ band
+                # is then self-contradictory: the screener picked
+                # *because* the bar broke the normal range, so requiring
+                # the bar to be inside the normal range again is a
+                # logical conflict that empirically blocked every entry
+                # on screener-picked symbols. Skip it when the screener
+                # has spoken.
+                noise_filter_required = (screener_side is None
+                                          and not strong_jump)
+
+                fired_long = (
+                    want == "long"
+                    and (broke_up or (strong_jump and lm_pre > 0))
+                    and (inside_band or not noise_filter_required)
+                )
+                fired_short = (
+                    want == "short"
+                    and (broke_dn or (strong_jump and lm_pre < 0))
+                    and (inside_band or not noise_filter_required)
+                )
                 if fired_long or fired_short:
                     side = "long" if fired_long else "short"
                     side_sign = 1 if fired_long else -1

@@ -520,18 +520,37 @@ class AlphaPulseWindow(QMainWindow):
             self.status_label.setText(f"⚙ {label} …")
 
     def _on_symbols_updated(self, symbols: list) -> None:
-        """When the engine refreshes its candle cache, expose every
-        downloaded symbol in the chart dropdown so the user can browse
-        the universe even if the screener has not produced signals yet."""
-        cur = self.symbol_combo.currentText()
+        """Refresh the chart-symbol dropdown.
+
+        Picks (symbols where ``A/B/C`` markers will actually be drawn)
+        are pinned to the top with a leading ★ so the user immediately
+        spots which symbols are tradable in this cycle. Non-pick symbols
+        remain browsable for raw-candle inspection.
+        """
+        # Identify currently-picked symbols from portfolio state. The
+        # raw symbol list still shows everything in the candle cache.
+        pick_set = set((self.portfolio.last_screen or {}).get("pick_symbols") or [])
+        # Sort: picks first, then alphabetical
+        ordered = (
+            sorted(s for s in symbols if s in pick_set) +
+            sorted(s for s in symbols if s not in pick_set)
+        )
+        decorated = [
+            ("★ " + s if s in pick_set else s)
+            for s in ordered
+        ]
+        cur_raw = self.symbol_combo.currentText().lstrip("★ ").strip()
         existing = [self.symbol_combo.itemText(i)
                      for i in range(self.symbol_combo.count())]
-        if symbols and symbols != existing:
+        if decorated != existing:
             self.symbol_combo.blockSignals(True)
             self.symbol_combo.clear()
-            self.symbol_combo.addItems(symbols)
-            if cur in symbols:
-                self.symbol_combo.setCurrentText(cur)
+            self.symbol_combo.addItems(decorated)
+            # Restore previous selection (strip/re-add ★ as appropriate)
+            target = ("★ " + cur_raw) if cur_raw in pick_set else cur_raw
+            idx = self.symbol_combo.findText(target)
+            if idx >= 0:
+                self.symbol_combo.setCurrentIndex(idx)
             else:
                 self.symbol_combo.setCurrentIndex(0)
             self.symbol_combo.blockSignals(False)
@@ -618,17 +637,21 @@ class AlphaPulseWindow(QMainWindow):
 
     # ------------------------------------------------------------------ #
     def _render_chart(self) -> None:
-        sym = self.symbol_combo.currentText()
-        if not sym:
+        decorated = self.symbol_combo.currentText()
+        if not decorated:
             self.chart.clear()
             return
+        # Strip the leading "★ " marker (purely a UI hint) before looking
+        # up candles / signals.
+        sym = decorated.removeprefix("★ ").strip()
         candles = self.worker.candles_for(sym) if self.worker else None
         if candles is None or candles.empty:
             self.chart.clear()
             return
-        # Render every cached symbol — passing an empty signals list is
-        # fine: the chart shows raw candles even when the screener has
-        # not produced any A/B/C markers for this symbol yet.
+        # Signals exist only for screener picks (the strategy only runs
+        # on picks). Non-pick symbols therefore render as raw candles —
+        # the ★ in the dropdown tells the user which symbols carry
+        # markers.
         sigs = [s for s in self.portfolio.signals if s.symbol == sym]
         self.chart.render(sym, candles, sigs)
 
