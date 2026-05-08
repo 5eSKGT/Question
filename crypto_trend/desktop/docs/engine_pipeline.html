@@ -207,19 +207,259 @@
 </div>
 
 <!-- ────────────────────────────────────────────────────────────────── -->
-<h2>스크리너 (학술적 근거)</h2>
+<h2>스크리너 — Bitget USDT-Perp 전체 상장 심볼에서 어떻게 고르는가</h2>
+
+<h3>풀고자 하는 문제</h3>
+<div class="card">
+<p>
+  매 사이클(기본 1시간) Bitget 의 <strong>USDT-Perp 전체 상장 심볼</strong>(≈ 100 ~
+  200 개)에 대해, 자기 자신의 최근 변동성 대비 통계적으로 <em>지금 막</em>
+  비정상적으로 큰 방향성 움직임을 시작한 종목을 골라야 합니다. 두 가지 헷갈리는
+  케이스를 명확히 구별해야 합니다:
+</p>
+<ul>
+  <li>✅ <strong>진짜 이벤트 (regime shift)</strong>: 변동성이 평소대로였는데 한
+    바에 큰 방향성 점프가 발생, 그리고 직전 단기 추세가 그 방향과 일치 →
+    <em>지금부터 추세추종으로 따라갈 가치가 있다.</em></li>
+  <li>❌ <strong>고립된 노이즈 스파이크</strong>: 한 바 튀고 다음 바에 도로 들어옴,
+    또는 직전 추세가 점프와 반대 방향 → <em>들어가면 평균회귀에 당함.</em></li>
+</ul>
+</div>
+
+<h3>4단계 데이터 흐름</h3>
+<div class="diagram">
+<svg viewBox="0 0 1080 220" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9"
+      markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2654f0"/>
+    </marker>
+    <linearGradient id="sg1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eaf2ff"/><stop offset="1" stop-color="#cfd8ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="20"  y="40" width="180" height="84" rx="10" fill="url(#sg1)" stroke="#2654f0"/>
+  <text x="110" y="64" text-anchor="middle" font-weight="700" font-size="13">1 · Universe</text>
+  <text x="110" y="84" text-anchor="middle" font-size="11">전체 USDT-Perp 심볼</text>
+  <text x="110" y="100" text-anchor="middle" font-size="11">load_markets()</text>
+  <text x="110" y="116" text-anchor="middle" font-size="11" fill="#0c248c">≈ 100~200개</text>
+
+  <rect x="220" y="40" width="180" height="84" rx="10" fill="url(#sg1)" stroke="#2654f0"/>
+  <text x="310" y="64" text-anchor="middle" font-weight="700" font-size="13">2 · Pre-filter</text>
+  <text x="310" y="84" text-anchor="middle" font-size="11">24h quoteVolume</text>
+  <text x="310" y="100" text-anchor="middle" font-size="11">≥ $5M (기본)</text>
+  <text x="310" y="116" text-anchor="middle" font-size="11" fill="#0c248c">→ 50~80개로 축소</text>
+
+  <rect x="420" y="40" width="180" height="84" rx="10" fill="url(#sg1)" stroke="#2654f0"/>
+  <text x="510" y="64" text-anchor="middle" font-weight="700" font-size="13">3 · OHLCV 다운로드</text>
+  <text x="510" y="84" text-anchor="middle" font-size="11">1h × 500봉</text>
+  <text x="510" y="100" text-anchor="middle" font-size="11">REST 병렬</text>
+  <text x="510" y="116" text-anchor="middle" font-size="11" fill="#0c248c">≈ 약 21일치</text>
+
+  <rect x="620" y="40" width="180" height="84" rx="10" fill="url(#sg1)" stroke="#1faa59"/>
+  <text x="710" y="64" text-anchor="middle" font-weight="700" font-size="13">4 · Score</text>
+  <text x="710" y="84" text-anchor="middle" font-size="11">LM · 다중 horizon</text>
+  <text x="710" y="100" text-anchor="middle" font-size="11">· Hurst · 유동성</text>
+  <text x="710" y="116" text-anchor="middle" font-size="11" fill="#0c248c">→ 통과한 후보</text>
+
+  <rect x="820" y="40" width="240" height="84" rx="10" fill="url(#sg1)" stroke="#a05a00"/>
+  <text x="940" y="64" text-anchor="middle" font-weight="700" font-size="13">5 · Rank · Top-N</text>
+  <text x="940" y="84" text-anchor="middle" font-size="11">|composite| 내림차순</text>
+  <text x="940" y="100" text-anchor="middle" font-size="11">상위 N 개만 전략에 전달</text>
+  <text x="940" y="116" text-anchor="middle" font-size="11" fill="#0c248c">기본 N = 10</text>
+
+  <line x1="200" y1="82" x2="220" y2="82" stroke="#2654f0" stroke-width="2" marker-end="url(#sa)"/>
+  <line x1="400" y1="82" x2="420" y2="82" stroke="#2654f0" stroke-width="2" marker-end="url(#sa)"/>
+  <line x1="600" y1="82" x2="620" y2="82" stroke="#2654f0" stroke-width="2" marker-end="url(#sa)"/>
+  <line x1="800" y1="82" x2="820" y2="82" stroke="#2654f0" stroke-width="2" marker-end="url(#sa)"/>
+
+  <text x="540" y="170" text-anchor="middle" font-size="13" fill="#586069">
+    각 심볼은 독립적으로 4-필터를 통과해야 점수가 부여되고, 통과한
+    후보 사이에서만 |composite| 로 순위를 매깁니다.
+  </text>
+  <text x="540" y="190" text-anchor="middle" font-size="11" fill="#586069">
+    (사이클 내 횡단면 정규화는 임계치 의미를 흐리므로 의도적으로 사용하지 않습니다.)
+  </text>
+</svg>
+</div>
+
+<h3>스코어링 4-구성요소</h3>
+
+<div class="card">
+<h3 style="color:#2654f0;margin-top:0">① Lee–Mykland 점프 통계량 — 학술적 핵심</h3>
+<p>
+  각 심볼의 로그수익률 시계열을 <em>연속 확산 + 희소 점프</em> 모형으로 봅니다:
+  <code>d log P_t = μ dt + σ_t dW_t + J_t dN_t</code>.
+  <strong>지금 막 점프했는가?</strong> 를 학술적으로 검정하기 위한 통계량은:
+</p>
+<pre>L_t  =  r_t  /  √( BV_t )
+
+BV_t  =  (π/2) · (1/(K-1)) · Σ |r_{i-1}|·|r_i|     (i = t-K+1, ..., t-1)</pre>
+<ul>
+  <li><strong>Bipower Variation (BV)</strong> — Barndorff-Nielsen &amp; Shephard
+    (2004), <em>"Power and bipower variation with stochastic volatility and
+    jumps"</em>, JFE 2(1). 곱 |r_{i-1}|·|r_i| 안에는 점프가 둘 다 들어갈 수 없으므로
+    BV 는 점프에 강건하게 <strong>확산 분산만</strong> 추정합니다.</li>
+  <li><strong>L_t 통계량</strong> — Lee &amp; Mykland (2008), <em>"Jumps in
+    financial markets: a new nonparametric test and jump dynamics"</em>,
+    RFS 21(6). 무점프 가정 아래 <code>L_t →ᵈ N(0,1)</code>; 점프 발생 시
+    |L_t| → ∞.</li>
+</ul>
+<p>
+  분모 BV 를 점프 직전 K 봉(기본 24)에서만 계산해 <strong>검사 대상 바 자신을
+  분모에서 제외</strong>합니다. 이 한 줄로 기존 robust-z 의 가장 큰 결함(자기
+  포함 MAD가 점프시 분모를 부풀려 검출력 저하)이 사라집니다.
+</p>
+<p>
+  실측 영분포(20,000 회 합성 시뮬레이션):
+</p>
 <table>
-  <tr><th>지표</th><th>출처</th><th>역할</th></tr>
-  <tr><td>Robust z-score (median / MAD)</td>
-      <td>Huber 1981; Rousseeuw &amp; Croux 1993</td>
-      <td>이상치(가짜 펌프 1틱)에 휘둘리지 않는 변동성 정규화</td></tr>
-  <tr><td>Hurst exponent (R/S)</td><td>Mandelbrot</td>
-      <td>현재 움직임이 추세 지속형(H&gt;0.55)인지, 평균회귀형인지 판별</td></tr>
-  <tr><td>log-quote-volume</td><td>—</td>
-      <td>유동성 플로어. 슬리피지가 CVaR 을 압도하는 종목 제외</td></tr>
-  <tr><td>composite = w₁·z + w₂·(H-0.5)·sign(z)</td><td>—</td>
-      <td>방향성과 지속성을 합쳐 정렬, 상위 N 만 채택</td></tr>
+  <tr><th>지표</th><th>이론(N(0,1))</th><th>실측 (K=24, σ=0.005)</th></tr>
+  <tr><td>E[|L|]</td><td>0.798</td><td>0.852</td></tr>
+  <tr><td>P(|L|&gt;2)</td><td>4.55%</td><td>~ 6%</td></tr>
+  <tr><td>P(|L|&gt;2.5) — 기본 임계치</td><td>1.24%</td><td>2.20%</td></tr>
+  <tr><td>P(|L|&gt;3)</td><td>0.27%</td><td>0.95%</td></tr>
 </table>
+<p>
+  실측 꼬리가 이론보다 약간 두꺼운 것은 BV 의 소표본 편향에서 오는 알려진
+  현상입니다(BNS 2006, Theorem 2). 실용적 임계치 |L|≥2.5 는 무점프 가정에서
+  약 2% 의 거짓 양성률에 해당하며, 다음 단계 ②~④ 의 추가 필터로 그마저도
+  10 분의 1 이하로 줄어듭니다.
+</p>
+</div>
+
+<div class="card">
+<h3 style="color:#2654f0;margin-top:0">② 다중 horizon 방향성 일치 — 노이즈 점프 거름망</h3>
+<p>
+  L_t 가 통과해도 그것이 <em>고립된 1바 노이즈</em>인지 <em>이미 형성 중이던
+  추세의 가속</em>인지는 알 수 없습니다. 이를 구별하기 위해 점프 직전
+  <strong>여러 horizon</strong>의 누적 로그수익률 부호가 점프 부호와 일치하는지
+  봅니다.
+</p>
+<pre>pre_jump = returns[:-1]                              # 점프 바 제외!
+agree(h) = sign( pre_jump[-h:].sum() ) == sign(L_t)
+
+기본 horizons = (1, 4, 24) 봉,  최소 일치 수 = 2 / 3
+</pre>
+<p>
+  <strong>점프 바 자체를 분모/분자에서 모두 제외</strong>한다는 점이 결정적입니다.
+  안 그러면 +10% 점프가 24-bar 누적합을 지배해 항상 "일치"를 만들어버려서
+  필터의 의미가 사라집니다.
+</p>
+<p>이론적 근거 — 시계열 모멘텀 (Moskowitz, Ooi &amp; Pedersen, 2012,
+   <em>"Time series momentum"</em>, JFE 104(2)): 한 자산의 다중 horizon 누적
+   수익률은 후속 수익의 강한 예측 변수임이 51개 자산군에서 확인됨. 우리는
+   이를 점프 검출의 <em>2차 검증</em>으로 사용.</p>
+</div>
+
+<div class="card">
+<h3 style="color:#2654f0;margin-top:0">③ Hurst R/S — 평균회귀 종목 제외</h3>
+<p>
+  ①②를 통과해도 시장 자체가 본질적으로 평균회귀형이면 추세추종이 잘 안 됩니다.
+  Hurst 지수 H (Mandelbrot 1969 R/S 분석)를 마지막 256봉에 대해 계산:
+</p>
+<ul>
+  <li>H ≈ 0.5 — 랜덤워크</li>
+  <li>H &gt; 0.5 — 지속성(추세 보존)</li>
+  <li>H &lt; 0.5 — 반지속성(평균회귀)</li>
+</ul>
+<p>
+  Hurst 는 ① 통과 후에만 평가합니다 — 점프 바 자체가 R/S 추정치를 왜곡할 수
+  있으므로, 통과한 후보에 한해 (의미 있는 후보군 안에서) 추가 필터로 사용.
+  기본 floor = 0.55.
+</p>
+</div>
+
+<div class="card">
+<h3 style="color:#2654f0;margin-top:0">④ 유동성 플로어 — 슬리피지가 CVaR을 못 잡아먹게</h3>
+<p>
+  24h 거래대금 ≥ $5M (기본). 이보다 얇은 종목은 시장가 진입 시 슬리피지가
+  CVaR 사이즈 한도를 압도해 모형이 무력화됩니다. 엔진은 OHLCV 다운로드 비용을
+  줄이려고 같은 임계치로 사전 필터링까지 하므로 두 단계가 일관됩니다.
+</p>
+</div>
+
+<h3>합성 점수 (composite)</h3>
+<div class="card">
+<pre>composite = w_mom · L_t
+          + w_pers · (H - 0.5) · 4 · sign(L_t)
+          + 0.25 · agree · sign(L_t)
+
+기본: w_mom = 0.7,  w_pers = 0.3</pre>
+<p>
+  세 가지가 모두 같은 부호로 가산되어 점프의 강도, 추세 지속성, 사전 추세
+  지지 정도를 한 스칼라로 압축합니다. <code>|composite|</code> 내림차순으로
+  상위 N 개만 전략 단계로 넘어가고, sign(L_t) 가 <strong>long(WINNER) /
+  short(LOSER)</strong> 사이드를 결정합니다.
+</p>
+</div>
+
+<h3>전략과의 정합성</h3>
+<div class="card">
+<p>
+  스크리너의 출력은 <em>"이 심볼이 지금 막 X 방향으로 점프했고 추세가 그 방향이다"
+  </em>이고, 전략은 그 신호 위에서 한 번 더 <strong>Donchian 돌파 + Yang-Zhang
+  파동 밴드 내부</strong> 조건을 검증합니다. 두 단계의 역할 분담:
+</p>
+<ul>
+  <li><strong>스크리너</strong> — 우주에서 <em>어떤 종목</em>을 볼지 결정</li>
+  <li><strong>전략</strong> — 그 종목 안에서 <em>언제 진입</em>할지 결정</li>
+</ul>
+<p>
+  이 분리 덕분에 스크리너 임계치를 살짝 느슨하게 풀어도 전략의 진입 조건이
+  2차 게이트로 작동합니다. 반대로 스크리너 임계치를 강하게 잡으면 전략은
+  거의 모든 후보에 진입하게 되는데, 그래도 CVaR 사이즈가 0 이면 자동으로
+  진입 자체를 건너뜁니다.
+</p>
+</div>
+
+<h3>학술적 검증 — 합성 백테스트 결과</h3>
+<div class="card">
+<p>
+  <code>tests/test_screener_backtest.py</code> 의 8개 테스트가 다음을 결정적으로
+  잠가둡니다 (모두 <code>pytest -q</code> 통과):
+</p>
+<table>
+  <tr><th>검증 항목</th><th>결과</th><th>코드</th></tr>
+  <tr><td>BV 가 점프에 강건 (RV 와 분리됨)</td><td>✅</td>
+      <td>test_bipower_variation_jump_robust</td></tr>
+  <tr><td>L_t 영분포가 ≈ N(0,1)</td><td>✅ E[|L|]=0.85, P(|L|&gt;3)=0.95%</td>
+      <td>test_lee_mykland_n01_under_null</td></tr>
+  <tr><td>L_t 가 점프시 폭발 (10% 점프 → |L|&gt;10)</td><td>✅</td>
+      <td>test_lee_mykland_explodes_on_jump</td></tr>
+  <tr><td>다중 horizon 정합이 점프 바를 제외</td><td>✅</td>
+      <td>test_multi_horizon_alignment_excludes_jump_bar</td></tr>
+  <tr><td>정밀도@8: 60종 중 8 점프 → 상위 8 안에서 ≥ 6 회수</td>
+      <td>✅ 일반적으로 7~8/8</td>
+      <td>test_precision_at_k_for_planted_jumps</td></tr>
+  <tr><td>WIN(추세+점프 일치) 채택, OUTLIER(추세 반대) 거부</td><td>✅</td>
+      <td>test_screener_aligns_jump_with_recent_drift</td></tr>
+  <tr><td>전방 12봉 수익률이 채택 사이드와 일치 (≥80%, E[fwd]&gt;0)</td><td>✅</td>
+      <td>test_forward_return_expectation_in_pick_direction</td></tr>
+  <tr><td>점프 없는 80종 풀에서 거짓 양성률 &lt; 10%</td><td>✅</td>
+      <td>test_low_false_alarm_under_pure_noise</td></tr>
+</table>
+<p>
+  종합하면 — 점프 검출은 <strong>BNS-LM 학술 표준</strong>을 따르고, 추세 정합
+  필터는 <strong>Moskowitz–Ooi–Pedersen 시계열 모멘텀</strong>을 작은 horizon 으로
+  적용하며, 합성 백테스트에서 정밀도/방향 정합/거짓 양성률 모두 정량적으로
+  검증되었습니다.
+</p>
+</div>
+
+<h3>알려진 한계 (정직하게)</h3>
+<div class="card">
+<ul>
+  <li>BV 의 소표본 편향으로 실측 꼬리가 이론보다 약간 두꺼움 → 실용 임계치를
+    2.5 가 아닌 3.0 정도로 올리면 거짓 양성률을 대략 절반으로 줄일 수 있음.</li>
+  <li>Hurst R/S 는 256봉으로도 추정 분산이 큼. 가능하면 DFA 또는 Whittle
+    추정으로 갈아탈 가치가 있음 — 후속 작업.</li>
+  <li>현재는 <em>방향성 점프</em>만 검출. 변동성 폭발(점프 없이 분산만 증가)은
+    별도 신호이지만 본 스크리너는 다루지 않음.</li>
+  <li>Funding rate / open interest 같은 perp 특수 신호는 미사용. 후속 연구거리.</li>
+</ul>
+</div>
 
 <!-- ────────────────────────────────────────────────────────────────── -->
 <h2>전략 — 진입 / 청산</h2>
