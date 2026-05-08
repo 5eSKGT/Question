@@ -182,6 +182,7 @@ def synthetic_universe(
     n_bars: int = 1500,
     seed: int = 0,
     factor_loadings_std: float = 0.7,
+    regime: str = "neutral",
 ) -> dict[str, pd.DataFrame]:
     """A correlated cross-section of Heston-jump paths.
 
@@ -189,10 +190,57 @@ def synthetic_universe(
         log_S_i,t = β_i · F_t + ε_i,t
     where F_t and ε_i,t are independent Heston-jump processes. The factor
     introduces realistic cross-symbol correlation.
+
+    ``regime`` controls the macro drift and jump asymmetry of the
+    market factor — the single biggest determinant of how a
+    trend-following strategy performs:
+
+        * ``"neutral"``   — symmetric jumps, zero drift (default).
+        * ``"bull_jump"`` — positive drift + jump distribution skewed up
+                            (mean=+1.5%). Models a real crypto bull
+                            market: smooth uptrend punctuated by
+                            +5-15% upward jumps. AlphaPulse should
+                            handle this — its target.
+        * ``"bull_diffusion"`` — positive drift, jump intensity HALVED.
+                            Models the rare "smooth-drift bull market"
+                            (more typical of equity indices). Tests
+                            whether AlphaPulse can capture beta with
+                            no jumps to grab.
+        * ``"bear_jump"`` — negative drift + downward-skewed jumps.
+        * ``"high_vol"``  — jump intensity 3× normal, mixed direction.
     """
     rng = np.random.default_rng(seed)
-    factor = heston_jump_path(n_bars, rng, jump_intensity=0.003,
-                                jump_mean=0.0, jump_std=0.04)
+
+    # ---- Regime → factor process parameters ------------------------ #
+    # All drifts calibrated to realistic crypto annualised levels:
+    # 0.0001 /h ≈ 0.24%/d ≈ 137%/y. These rough magnitudes match
+    # observed BTC bull (≈+60-200%/y) and bear (≈-40-65%/y) cycles.
+    if regime == "bull_jump":
+        f_drift = 0.00015                   # ≈ +260%/y, real crypto bull
+        f_jump_intensity = 0.005            # one jump per ~200 bars
+        f_jump_mean = 0.012                 # +1.2% upward-skewed jumps
+    elif regime == "bull_diffusion":
+        f_drift = 0.00010                   # ≈ +140%/y, smooth drift only
+        f_jump_intensity = 0.0008           # rare jumps
+        f_jump_mean = 0.0
+    elif regime == "bear_jump":
+        f_drift = -0.00012                  # ≈ -65%/y
+        f_jump_intensity = 0.005
+        f_jump_mean = -0.012
+    elif regime == "high_vol":
+        f_drift = 0.0
+        f_jump_intensity = 0.012            # 3× normal, mixed direction
+        f_jump_mean = 0.0
+    else:                                    # neutral
+        f_drift = 0.0
+        f_jump_intensity = 0.003
+        f_jump_mean = 0.0
+
+    factor = heston_jump_path(n_bars, rng,
+                                drift_per_bar=f_drift,
+                                jump_intensity=f_jump_intensity,
+                                jump_mean=f_jump_mean,
+                                jump_std=0.04)
     factor_log = np.log(factor["close"].to_numpy())
     factor_log = factor_log - factor_log[0]
 
@@ -202,7 +250,8 @@ def synthetic_universe(
         idio_rng = np.random.default_rng(seed * 9999 + i)
         idio = heston_jump_path(n_bars, idio_rng,
                                   jump_intensity=0.004,
-                                  jump_mean=0.0, jump_std=0.05)
+                                  jump_mean=0.0,
+                                  jump_std=0.05)
         idio_log = np.log(idio["close"].to_numpy())
         idio_log = idio_log - idio_log[0]
         combined_log = beta * factor_log + idio_log + np.log(100.0)

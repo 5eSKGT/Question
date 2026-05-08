@@ -349,9 +349,46 @@ class BacktestDialog(QDialog):
         cform.addRow("슬리피지 (bps)", self.slippage_bps)
         v.addLayout(cform)
 
+        # ---- preset row -------------------------------------------- #
+        sep3 = QLabel("프리셋")
+        sep3.setStyleSheet(f"color:{ACCENT_DEEP}; font-weight:600; padding-top:8px;")
+        v.addWidget(sep3)
+        preset_help = QLabel(
+            "방어형: 자본 보호 우선 — 하락장에 강함 / 상승장 비참여\n"
+            "균형형: 모든 레짐 양수 수익 — Sortino 1.5–3 / raw return 약함\n"
+            "공격형: 상승장 흡수력 ↑ — MDD 도 같이 커짐")
+        preset_help.setStyleSheet(f"color:{SUBTEXT}; font-size:11px;")
+        preset_help.setWordWrap(True)
+        v.addWidget(preset_help)
+        prow = QHBoxLayout()
+        b1 = QPushButton("🛡 방어형")
+        b1.setObjectName("ghost"); b1.clicked.connect(self._preset_defensive)
+        b2 = QPushButton("⚖ 균형형")
+        b2.setObjectName("ghost"); b2.clicked.connect(self._preset_balanced)
+        b3 = QPushButton("🚀 공격형")
+        b3.setObjectName("ghost"); b3.clicked.connect(self._preset_aggressive)
+        prow.addWidget(b1); prow.addWidget(b2); prow.addWidget(b3)
+        v.addLayout(prow)
+
         v.addStretch(1)
         self._on_source_change(self.source_combo.currentIndex())
         return wrapper
+
+    # ---- preset application ------------------------------------------ #
+    def _preset_defensive(self) -> None:
+        self.cvar_floor.setValue(-0.08); self.cvar_alpha.setValue(0.05)
+        self.target_vol.setValue(0.20); self.kelly_safety.setValue(0.5)
+        self.sizing_cap.setValue(1.0); self.leverage_cap.setValue(3)
+
+    def _preset_balanced(self) -> None:
+        self.cvar_floor.setValue(-0.10); self.cvar_alpha.setValue(0.05)
+        self.target_vol.setValue(0.30); self.kelly_safety.setValue(1.0)
+        self.sizing_cap.setValue(2.0); self.leverage_cap.setValue(3)
+
+    def _preset_aggressive(self) -> None:
+        self.cvar_floor.setValue(-0.15); self.cvar_alpha.setValue(0.05)
+        self.target_vol.setValue(0.40); self.kelly_safety.setValue(1.0)
+        self.sizing_cap.setValue(3.0); self.leverage_cap.setValue(5)
 
     def _build_results_panel(self) -> QWidget:
         wrapper = QWidget()

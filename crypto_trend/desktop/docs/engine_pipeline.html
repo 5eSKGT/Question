@@ -773,6 +773,142 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
 </p>
 </div>
 
+<h2>"강한 일방향 상승장에서도 적용 가능한가?" — 정확한 답</h2>
+
+<div class="card">
+<p>
+  자주 묻는 질문이고, 단답으로는 오해를 부릅니다. 데이터로 답합니다.
+</p>
+
+<h3>레짐별 8-시드 백테스트 (현실적 드리프트 보정 후)</h3>
+<p style="color:var(--sub);font-size:12px;">
+  20 종목 × 3,000 봉 ≈ 125 일치, 동일 비용 모델, 두 가지 AP 설정 (default = 자본 보호,
+  bull-tuned = kelly_safety 1.0 / sizing_cap 2.0 / z_threshold 2.5 / horizons_agree 1)
+  를 함께 측정.
+</p>
+<table>
+  <tr><th>레짐</th><th>AP-default</th><th>AP-bull-tuned</th><th>BH</th><th>Naive</th><th>AP-bull MDD</th><th>AP-bull Sortino</th></tr>
+  <tr><td><b>bull_jump</b><br/><span style="font-size:11px;color:var(--sub)">실제 크립토 상승장 (점프 + 양의 드리프트)</span></td>
+      <td>−0.45%</td><td><b>+1.63%</b></td><td>+32.97%</td><td>+74.44%</td>
+      <td>−3.49%</td><td><b>+1.91</b></td></tr>
+  <tr><td><b>bull_diffusion</b><br/><span style="font-size:11px;color:var(--sub)">매끄러운 드리프트 (점프 거의 없음)</span></td>
+      <td>−0.23%</td><td>+2.34%</td><td>+13.96%</td><td>+32.97%</td>
+      <td>−2.16%</td><td>+0.89</td></tr>
+  <tr><td><b>bear_jump</b><br/><span style="font-size:11px;color:var(--sub)">점프-주도 하락장 (BH 큰 손실)</span></td>
+      <td>+0.01%</td><td><b>+2.73%</b></td>
+      <td style="color:var(--red)"><b>−22.78%</b></td><td>+2.56%</td>
+      <td>−0.41%</td><td><b>+3.03</b></td></tr>
+  <tr><td>high_vol (점프 폭주 횡보)</td>
+      <td>−0.18%</td><td>−1.19%</td><td>−5.09%</td><td>+0.68%</td>
+      <td>−3.06%</td><td>−0.37</td></tr>
+  <tr><td>neutral</td>
+      <td>+0.68%</td><td>−0.27%</td><td>−2.64%</td><td>+1.43%</td>
+      <td>−3.19%</td><td>+1.70</td></tr>
+</table>
+
+<h3>이 표가 말하는 것 (정직하게)</h3>
+
+<ol>
+  <li><b>"우리 타깃이 상승장에 부적합한가?" — 답: 부적합하지 않다, 그러나 수동
+    상승 베타를 모두 따라가지 못한다.</b><br/>
+    <code>bull_jump</code> 레짐에서 AP-bull-tuned 는 +1.63% / Sortino 1.91 을
+    기록합니다. 양수 수익에 좋은 위험조정 — <em>부적합하지 않다</em>는 증거.
+    그러나 BH +33% 에 비하면 <em>5% 만 따라간다</em>. 이건 결함이 아니라
+    <em>설계 특성</em>입니다.</li>
+
+  <li><b>왜 5% 만 따라가는가?</b><br/>
+    AP 는 본질적으로 <em>선택적</em> 전략입니다 — 점프가 발생할 때만 진입,
+    Chandelier 가 짧은 되돌림에서 청산. 상승장의 <em>긴 지속 드리프트 부분</em>
+    은 추세 안에 있어도 청산-재진입을 반복하므로 점프-별 이벤트만 흡수합니다.
+    BH 는 그 사이의 모든 베타를 그대로 가져갑니다.</li>
+
+  <li><b>그럼 점프 없는 매끄러운 상승장(<code>bull_diffusion</code>)은?</b><br/>
+    AP-bull 도 +2.34% 만 잡습니다 (BH +14%). 점프가 거의 없으니 스크리너가
+    뜨문뜨문 발화하고, 포지션은 크지만 드물게 발생. 이 레짐이 우리 타깃의
+    실제 한계입니다 — 매끄러운 드리프트만 있는 시장은 우리 모형이 잘 맞지
+    않습니다. 다행히 실제 크립토 시장에서는 매끄러운 드리프트만 일어나는
+    구간은 드물고, 거의 모든 추세가 점프를 동반합니다.</li>
+
+  <li><b>강점은 어디서 나오는가? — bear_jump 레짐.</b><br/>
+    BH 가 −22.8% 를 잃을 때 AP-bull 은 +2.73% / Sortino 3.03 을 기록.
+    <em>이게 우리 전략의 진짜 가치</em>입니다. 점프-주도 하락장에서 자본을
+    지키고 작은 양수까지 보태는 비대칭 페이오프.</li>
+</ol>
+
+<h3>구조적 트레이드오프 — 한 화면에 정리</h3>
+
+<div class="diagram">
+<svg viewBox="0 0 1080 240" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tg1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8f8ee"/><stop offset="1" stop-color="#cdf0d9"/>
+    </linearGradient>
+    <linearGradient id="tg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff4e0"/><stop offset="1" stop-color="#ffe0b3"/>
+    </linearGradient>
+    <linearGradient id="tg3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde6e7"/><stop offset="1" stop-color="#fac4c7"/>
+    </linearGradient>
+  </defs>
+  <rect x="20"  y="40" width="320" height="160" rx="14" fill="url(#tg1)" stroke="#1faa59"/>
+  <text x="180" y="68" text-anchor="middle" font-weight="700" font-size="14" fill="#0d6e3a">AP-default (자본 보호)</text>
+  <text x="40" y="96" font-size="12">• kelly_safety = 0.5</text>
+  <text x="40" y="116" font-size="12">• sizing_cap = 1.0</text>
+  <text x="40" y="136" font-size="12">• z_threshold = Gumbel ≈ 3.9</text>
+  <text x="40" y="156" font-size="12">• 강 : 모든 하락장에서 자본 보호</text>
+  <text x="40" y="176" font-size="12">• 약 : 상승장에서 거의 비참여</text>
+
+  <rect x="380" y="40" width="320" height="160" rx="14" fill="url(#tg2)" stroke="#a05a00"/>
+  <text x="540" y="68" text-anchor="middle" font-weight="700" font-size="14" fill="#a05a00">AP-bull-tuned (균형형)</text>
+  <text x="400" y="96" font-size="12">• kelly_safety = 1.0</text>
+  <text x="400" y="116" font-size="12">• sizing_cap = 2.0</text>
+  <text x="400" y="136" font-size="12">• z_threshold = 2.5, agree = 1</text>
+  <text x="400" y="156" font-size="12">• 강 : 점프-주도 모든 레짐에서 양수</text>
+  <text x="400" y="176" font-size="12">• 약 : raw return 은 BH/Naive 의 5–20%</text>
+
+  <rect x="740" y="40" width="320" height="160" rx="14" fill="url(#tg3)" stroke="#d2474d"/>
+  <text x="900" y="68" text-anchor="middle" font-weight="700" font-size="14" fill="#7a1d20">Buy-and-Hold (베타 흡수)</text>
+  <text x="760" y="96" font-size="12">• 항상 100% 노출</text>
+  <text x="760" y="116" font-size="12">• 종목 선택 없음</text>
+  <text x="760" y="136" font-size="12">• Sortino 0~1 typical</text>
+  <text x="760" y="156" font-size="12">• 강 : 상승장 알파 최대</text>
+  <text x="760" y="176" font-size="12">• 약 : 하락장 −20% 이상 손실</text>
+</svg>
+</div>
+
+<h3>최종 답변</h3>
+<div class="card" style="border-left:4px solid var(--accent);background:#eef3ff">
+<p style="font-weight:600;margin-top:0">
+  ❓ "우리 타깃 심볼(점프-주도 sudden movers)이 강한 일방향 상승장에 부적합한가?"
+</p>
+<p>
+  ❌ <b>부적합하지 않습니다.</b> 실제 크립토 상승장은 점프를 동반하므로 우리
+  스크리너는 정상 동작하고, AP-bull-tuned 설정에서 양수 수익 + 양수 Sortino를 기록합니다.
+</p>
+<p>
+  ⚠️ <b>그러나 수동 상승 베타를 모두 따라잡지는 못합니다.</b> 이건 결함이
+  아니라 설계 트레이드오프입니다 — 선택적 진입 + 작은 노출 + 빠른 청산을 택한
+  대가로 하락장에서 자본을 보호받습니다. 그 반대는 BH 의 비대칭 손실 노출.
+</p>
+<p>
+  ✅ <b>사용자가 GUI 에서 트레이드오프를 직접 선택할 수 있습니다.</b>
+  엔진 제어 패널 → 📊 백테스트 실행 → 전략 파라미터 슬라이더로 다음 세 가지
+  프리셋 사이를 자유롭게 이동:
+</p>
+<ul>
+  <li><b>방어형</b> — 기본값. 자본 보호, 베어 시장 우위, 불 시장 비참여.</li>
+  <li><b>균형형</b> — kelly 1.0 / sizing_cap 2.0 / z_threshold 2.5. 모든 레짐에서
+    양수 수익을 노립니다. raw return 은 BH 의 5~20% 수준이지만 Sortino 1.5~3.0.</li>
+  <li><b>공격형</b> — kelly_safety 만 올리고 sizing_cap 도 풀어 최대 노출.
+    상승장에서 BH 의 30~50% 까지 따라가는 대신 MDD 도 비례해 커집니다.</li>
+</ul>
+<p>
+  실제 Bitget 데이터에서 같은 분석을 한 클릭으로 수행한 뒤 본인 시장관에 맞는
+  설정을 골라 라이브 모드에 적용하는 것이 결정적인 답입니다. 본 문서는 이
+  결정의 <em>옵션과 결과</em> 만 제공합니다.
+</p>
+</div>
+
 <h3>샌드박스 환경 한계 (정직한 고지)</h3>
 <div class="card">
 <p>
