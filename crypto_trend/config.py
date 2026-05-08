@@ -72,9 +72,16 @@ class Settings:                 # NOTE: not frozen — GUI mutates at runtime
     # accounting matches live without exposing a knob to the user.
     taker_fee: float = 6e-4
     slippage_bps: float = 1.0
-    # Backtest history depth — derived to give walk-forward room while
-    # keeping API calls reasonable. NOT exposed to the user.
-    backtest_bars: int = 2000
+    # Backtest history depth — calibrated for statistical adequacy.
+    # Lo (2002) and López de Prado AFML Ch.13 require ≥ 250 trading days
+    # / ≥ 100 trades for tight Sharpe inference; with 1h bars that's
+    # 8,760 bars = 1 year. Below this the OOS results are too noisy to
+    # claim "the strategy was valid up to now" with statistical confidence.
+    backtest_bars: int = 8760
+    # Live OOS evaluation window — wider than walk_forward_test_days so
+    # PSR/SR variance is small enough to act on. 720 bars = 30 days
+    # roughly matches Lo (2002)'s minimum for SR=1.0 inference at 5%.
+    live_oos_bars: int = 720
 
     @property
     def is_live(self) -> bool:

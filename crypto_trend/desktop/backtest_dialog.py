@@ -324,12 +324,15 @@ class BacktestDialog(QDialog):
             f"비용 모델 모두 사용자가 변경할 수 없습니다 — 그래야 결과가 "
             f"실제 운용을 의미 있게 예측합니다.</span><br><br>"
             f"<b>유니버스</b> · 전체 USDT-Perp / 24h 거래대금 ≥ $5M<br>"
-            f"<b>타임프레임 / 봉 수</b> · 1h × {bars_default}<br>"
+            f"<b>타임프레임 / 봉 수</b> · 1h × {bars_default} "
+            f"(<span style='color:{SUBTEXT}'>≈ 1년, Lo 2002 + López de Prado "
+            f"AFML 통계적 최소</span>)<br>"
             f"<b>Walk-forward</b> · train {SETTINGS.walk_forward_train_days}d "
-            f"/ test {SETTINGS.walk_forward_test_days}d<br>"
+            f"/ test {SETTINGS.walk_forward_test_days}d (≈ 50 windows)<br>"
             f"<b>비용 모델</b> · taker {SETTINGS.taker_fee*1e4:.1f} bps "
             f"+ slippage {SETTINGS.slippage_bps:.1f} bps<br>"
-            f"<b>OOS 자가보정</b> · 윈도우마다 AdaptiveOOS.step() 호출<br>"
+            f"<b>OOS 자가보정</b> · 윈도우마다 AdaptiveOOS.step() · 실패 시 "
+            f"전 포지션 시장가 청산 후 HALT<br>"
             f"<b>스크리너 빈도</b> · 매 1봉 (live 사이클과 동일)")
         env_card.setWordWrap(True)
         env_card.setTextFormat(Qt.RichText)

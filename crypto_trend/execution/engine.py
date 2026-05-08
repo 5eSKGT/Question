@@ -285,9 +285,16 @@ class TradingEngine:
     # ------------------------------------------------------------------ #
     def _run_oos_check(self) -> None:
         # Walk-forward window: the most recent K bars are treated as the OOS
-        # test set. Older bars are warmup for the indicators only. This is
-        # what the spec calls "OOS 데이터에 따라 유동적으로 전략을 자동보정".
-        oos_bars = max(SETTINGS.walk_forward_test_days * 24, 24)
+        # test set. Older bars are warmup for the indicators only.
+        #
+        # Width matters: PSR / Sharpe estimators have variance ∝ 1/√n, so
+        # too small a window means the gate is dominated by noise. We use
+        # SETTINGS.live_oos_bars (default 720 = 30 days), calibrated from
+        # Lo (2002) "The statistics of Sharpe ratios" as the minimum
+        # window for ~5% confidence on SR=1.0. Anything shorter — e.g.
+        # the 7d test window — produced halt verdicts that were
+        # statistically indistinguishable from coin flips.
+        oos_bars = max(SETTINGS.live_oos_bars, 24)
 
         # Prefer evaluating on the symbols we are actually trading; if we have
         # no live positions yet, evaluate on whatever the screener produced
@@ -355,12 +362,59 @@ class TradingEngine:
                     f"OOS warmup ({self._cycle_count}/{self.oos_warmup_cycles}) — "
                     f"deferring halt: {e}")
                 return
+            # Real halt: trust nothing the strategy is currently doing.
+            # Force-close every open position at market BEFORE flipping
+            # the halt flag, so subsequent cycles cannot re-enter.
+            self._close_all_positions_on_halt(reason=str(e))
             self.portfolio.halt(str(e))
             self.portfolio.add_message(TradeMessage(
                 ts=pd.Timestamp.utcnow(), symbol="*",
                 text=f"⚠ TRADING HALTED — {e}",
                 kind="halt",
             ))
+
+    # ------------------------------------------------------------------ #
+    def _close_all_positions_on_halt(self, reason: str) -> None:
+        """Submit reduce-only market exits for every open position.
+
+        Called when the OOS adaptor cannot find passing parameters. The
+        idea is: if we no longer trust the strategy's edge, we must not
+        trust its exit logic either — so we eliminate the exposure
+        outright via market orders. Failures are logged but do not
+        prevent the halt flag from being set: it is better to stop new
+        entries even if a few stale positions cannot be closed.
+        """
+        from ..exchange.bitget_client import Order
+        for sym, side in list(self._open_positions.items()):
+            held = self.portfolio.positions.get(sym, {})
+            qty = abs(float(held.get("qty", 0.0)))
+            if qty <= 0:
+                self._open_positions.pop(sym, None)
+                continue
+            order = Order(
+                symbol=sym,
+                side="sell" if side == "long" else "buy",
+                qty=qty, price=None, reduce_only=True,
+            )
+            try:
+                fill = self.broker.submit(order)
+                self._open_positions.pop(sym, None)
+                pnl = ((fill.price - float(held.get("avg_price", fill.price)))
+                       * (1 if side == "long" else -1) * qty)
+                self.portfolio.add_message(TradeMessage(
+                    ts=fill.ts, symbol=sym,
+                    text=f"⚠ HALT-EXIT {side.upper()} {sym} @ {fill.price:.4f} "
+                         f"(pnl={pnl:+.2f} USDT, reason=oos_halt)",
+                    delta_usdt=pnl, kind="halt",
+                ))
+                log.warning(
+                    f"halt-exit {sym} side={side} qty={qty} → @ {fill.price}")
+            except Exception as e:                                   # noqa: BLE001
+                log.error(f"halt-exit failed for {sym}: {e}")
+                self.portfolio.add_message(TradeMessage(
+                    ts=pd.Timestamp.utcnow(), symbol=sym,
+                    text=f"⚠ HALT-EXIT FAILED {sym} — {e}", kind="halt",
+                ))
 
     @staticmethod
     def _returns_from_signals(df: pd.DataFrame, sigs: list[Signal]) -> np.ndarray:

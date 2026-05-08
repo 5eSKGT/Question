@@ -1177,6 +1177,106 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
 </p>
 </div>
 
+<h2>통계적 적절성 — "어느 정도면 의미 있는가"</h2>
+
+<div class="card" style="border-left:4px solid var(--accent);background:#eef3ff">
+<p style="margin-top:0">
+  <strong>백테스트는 *과거 유효성*만 측정합니다 — 미래 보장이 아닙니다.</strong>
+  하지만 그 "과거 유효성" 조차 *통계적으로 유의한 기간*으로 측정해야 의미가
+  있습니다. 너무 짧은 기간은 코인플립과 구분되지 않습니다.
+</p>
+
+<h3>학술적 최소 기준</h3>
+<table>
+  <tr><th>출처</th><th>요구사항</th><th>1h 봉 환산</th></tr>
+  <tr><td>Lo (2002), <em>Statistics of Sharpe Ratios</em>, FAJ 58(4)</td>
+      <td>SR=1.0 의 5% 유의 추정에 ≥ 250 거래일</td>
+      <td><b>≥ 6,000 봉</b></td></tr>
+  <tr><td>López de Prado (2018), <em>Advances in Financial ML</em> Ch. 13</td>
+      <td>추세 시스템에 ≥ 100 trades, 권장 200+</td>
+      <td><b>≥ 8,760 봉</b> (≈ 1년)</td></tr>
+  <tr><td>Bailey &amp; López de Prado (2012), PSR</td>
+      <td>PSR 분산 = O(1/n), 720봉으로 SE ≈ 0.04</td>
+      <td><b>≥ 720 봉</b> (라이브 OOS 윈도우)</td></tr>
+</table>
+
+<h3>본 시스템의 commit 된 적용</h3>
+<pre>config.py:
+  backtest_bars      = 8,760    ← Lo + López de Prado 최소 기준
+  live_oos_bars      = 720      ← Bailey-López de Prado PSR 분산 ≤ 0.04 임계
+  walk_forward_train_days = 30  ← 모든 walk-forward 윈도우의 워밍업
+  walk_forward_test_days  = 7   ← 각 walk-forward 세그먼트 길이
+                                   (= 약 50 윈도우, 100~300 trades 예상)</pre>
+
+<p>
+  이 값들은 <em>임의</em>가 아닙니다 — 학술 출처에서 "5% 유의 통계 추정"의
+  최소를 만족하도록 도출되었습니다. 더 짧으면 신뢰구간이 너무 넓어서
+  "전략이 유효했다" 라는 진술 자체가 의미를 잃습니다.
+</p>
+
+<p style="color:var(--sub);font-size:12px">
+  cf. 단위 테스트 통과나 1주일 백테스트 양의 수익은 통계적 신뢰의 근거가
+  되지 않습니다 — 그건 개발자의 자기위안일 뿐입니다.
+</p>
+</div>
+
+<h2>HALT Semantics — "매매 중단"의 정확한 정의</h2>
+
+<div class="card" style="border-left:4px solid var(--red);background:#fde6e7">
+<p style="margin-top:0">
+  OOS 자가보정이 실패하면(=재보정 그리드의 어느 후보도 PSR/SR 임계를 통과
+  못함) "전략의 알파를 더 이상 신뢰할 수 없다"는 뜻입니다. 이 상황에서
+  *전략의 진입 로직*뿐 아니라 *전략의 청산 로직(Chandelier·CVaR breach)*
+  까지 신뢰하지 않는 것이 옳습니다 — 신호가 깨졌다면 stop도 깨졌을 수
+  있습니다.
+</p>
+
+<h3>본 시스템 HALT의 5단계 동작</h3>
+<table>
+  <tr><th>단계</th><th>동작</th><th>코드 위치</th></tr>
+  <tr><td>1. 감지</td>
+      <td><code>AdaptiveOOS.step()</code> 가 <code>RecalibrationFailed</code> raise</td>
+      <td><code>oos/adaptive.py</code></td></tr>
+  <tr><td>2. 워밍업 가드</td>
+      <td>첫 5 사이클은 <em>HALT 유예</em> — 데이터 부족으로 인한 거짓
+        HALT 차단</td>
+      <td><code>engine.py · run_once</code></td></tr>
+  <tr><td>3. <b>전 포지션 즉시 청산</b></td>
+      <td>모든 open position 에 대해 <code>reduce_only</code> 시장가 청산
+        주문 발사. PnL 메시지 기록.</td>
+      <td><code>engine.py · _close_all_positions_on_halt</code></td></tr>
+  <tr><td>4. HALT 플래그 set</td>
+      <td><code>portfolio.halt(reason)</code> → <code>halted = True</code></td>
+      <td><code>portfolio/state.py</code></td></tr>
+  <tr><td>5. 후속 사이클 차단</td>
+      <td><code>run_once()</code> 첫 줄에서 <code>halted</code> 검사 후
+        early return — 신규 진입 / 청산 / 데이터 갱신 모두 정지</td>
+      <td><code>engine.py · run_once</code></td></tr>
+</table>
+
+<h3>왜 단순히 "신규 진입만 차단" 이 아닌가</h3>
+<p>
+  "전략은 알파가 깨졌지만 청산은 OK" 라는 가정은 약합니다. 분포 변화가
+  Chandelier ATR 의 가정도 무효화할 수 있고, 시간 스톱이 너무 늦게 작동할
+  수도 있습니다. <strong>OOS가 실패했다 = 전체 전략 시스템을 신뢰할 수
+  없다</strong>가 정합적입니다. 따라서 시장가 청산이 보수적이고 정확한
+  대응입니다.
+</p>
+
+<h3>검증</h3>
+<p>
+  <code>tests/test_halt_semantics.py</code> 두 개의 통합 테스트가 이 계약을
+  잠가둡니다 :
+</p>
+<ul>
+  <li><code>test_halt_closes_all_open_positions</code> — 가짜 broker 에 두
+    포지션을 열어두고 OOS adaptor 가 RecalibrationFailed 를 던지게 한 뒤,
+    엔진이 두 심볼 모두에 대해 reduce-only 시장가 주문을 *발사했는지* 확인.</li>
+  <li><code>test_halt_blocks_subsequent_cycles</code> — HALT 후 5 사이클
+    추가 호출해도 broker 호출이 *전혀 없는지* 확인.</li>
+</ul>
+</div>
+
 <h2>한 트레이드의 일생 — 시간 순</h2>
 <div class="card">
 <ol>
