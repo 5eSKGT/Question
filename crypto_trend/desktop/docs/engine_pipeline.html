@@ -308,6 +308,20 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
       <td>시작 시 확인 다이얼로그, API 키 누락 시 시작 차단</td></tr>
 </table>
 
+<h3>Bitget 자격증명 3-요소</h3>
+<table>
+  <tr><th>요소</th><th>발급 방식</th><th>역할</th></tr>
+  <tr><td><code>API Key</code></td>
+      <td>Bitget 자동 생성 (영문/숫자)</td>
+      <td>요청자 식별. 헤더 <code>ACCESS-KEY</code>.</td></tr>
+  <tr><td><code>API Secret</code></td>
+      <td>Bitget 자동 생성, 1회만 표시</td>
+      <td>요청 본문 HMAC-SHA256 서명에 사용</td></tr>
+  <tr><td><code>API Passphrase</code></td>
+      <td><b>사용자가 키 생성 시 직접 입력</b> (8–32자)</td>
+      <td>매 요청 헤더 <code>ACCESS-PASSPHRASE</code>. Bitget 로그인 비밀번호와는 무관한 별개의 API 전용 비밀번호.</td></tr>
+</table>
+
 <!-- ────────────────────────────────────────────────────────────────── -->
 <h2>매매 제어 — 사용자가 누를 수 있는 버튼</h2>
 <table>
