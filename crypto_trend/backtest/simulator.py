@@ -220,15 +220,28 @@ class StrategySimulator:
                 if not (fire_long or fire_short):
                     continue
 
-                # Optimal sizing: Kelly + Vol-target + CVaR + leverage cap
+                # Strategy-aware sizing — fixed-fractional risk against the
+                # Chandelier stop, multiplied by LM/agree confidence,
+                # capped by CVaR floor and safe-leverage rule.
                 from ..risk.sizing import optimal_position
+                from ..screener.winner_loser import (
+                    lee_mykland_statistic, multi_horizon_alignment)
                 sample = pc.log_rets[max(0, t - 256): t]
+                pre_rets = pc.log_rets[: t]
+                lm = lee_mykland_statistic(pre_rets, window=24)
+                lm_signed = (1 if fire_long else -1) * abs(lm)
+                agree = multi_horizon_alignment(
+                    pre_rets, 1 if fire_long else -1, horizons=(1, 4, 24))
                 decision = optimal_position(
-                    sample, cvar_floor=p.cvar_floor,
+                    sample,
+                    price=close, atr=a_i,
+                    lm_stat=float(lm_signed), agree=int(agree), max_agree=3,
+                    lm_threshold=p.lm_threshold,
+                    chandelier_mult=p.chandelier_mult,
+                    risk_per_trade=p.risk_per_trade,
+                    cvar_floor=p.cvar_floor,
                     cvar_alpha=p.cvar_alpha,
-                    target_vol=p.target_annual_vol,
-                    kelly_safety=p.kelly_safety,
-                    fraction_cap=p.sizing_cap,
+                    sizing_cap=p.sizing_cap,
                     leverage_cap=int(p.leverage_cap),
                 )
                 size = decision.fraction

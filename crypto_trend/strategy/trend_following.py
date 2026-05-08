@@ -23,8 +23,9 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-from ..risk.cvar import max_size_under_cvar
 from ..risk.sizing import optimal_position
+from ..screener.winner_loser import (lee_mykland_statistic,
+                                       multi_horizon_alignment)
 
 
 class SignalType(str, Enum):
@@ -94,21 +95,17 @@ def donchian(df: pd.DataFrame, n: int = 20) -> tuple[pd.Series, pd.Series]:
 class StrategyParams:
     """Canonical strategy parameters — the strategy IS this configuration.
 
-    Only the indicator parameters (breakout_n, atr_n, chandelier_mult) are
-    mutated at runtime by ``AdaptiveOOS`` based on live OOS data. The risk
-    and sizing parameters are committed defaults that never change at
-    runtime — they constitute the strategy's "personality" and changing
-    them would mean running a different strategy.
+    Indicator parameters (breakout_n, atr_n, chandelier_mult) are mutated
+    at runtime by ``AdaptiveOOS`` based on live OOS data. Risk and sizing
+    parameters are committed defaults that constitute the strategy's
+    identity.
 
-    The values below were selected as the canonical AlphaPulse:
-      * Per-regime backtest showed Sortino ≥ 1.9 in jump-driven markets
-      * MDD remains an order of magnitude below Buy-and-Hold's
-      * Kelly safety = 1.0 (full empirical Kelly), tempered by CVaR cap
-        — the CVaR floor is what enforces capital protection here, not a
-        Kelly discount
-      * target_annual_vol = 0.30 matches realised crypto vol so the
-        vol-targeting term rarely binds; CVaR and Kelly are the active
-        constraints
+    Sizing follows the strategy-aware contract documented in
+    ``crypto_trend/risk/sizing.py``: every input maps to a specific
+    strategy primitive (Chandelier stop, LM statistic, multi-horizon
+    agreement, CVaR distribution). The only knob with $-units is
+    ``risk_per_trade``: hitting the Chandelier stop loses exactly that
+    fraction of equity, regardless of asset volatility.
     """
     # ---- indicator params (auto-tuned by OOS) -------------------- #
     breakout_n: int = 20
@@ -122,9 +119,9 @@ class StrategyParams:
     cvar_alpha: float = 0.05
     cvar_floor: float = -0.10
     leverage_cap: float = 3.0
-    target_annual_vol: float = 0.30
-    kelly_safety: float = 1.0
-    sizing_cap: float = 2.0
+    risk_per_trade: float = 0.01      # per-trade risk budget (= 1% of equity)
+    sizing_cap: float = 2.0           # absolute fraction-of-equity ceiling
+    lm_threshold: float = 4.0         # LM stat reference for confidence multiplier
 
 
 class TrendFollowingStrategy:
@@ -180,50 +177,53 @@ class TrendFollowingStrategy:
                 if want is None:
                     want = "long" if broke_up else ("short" if broke_dn else None)
 
-                if want == "long" and broke_up and inside_band:
+                fired_long = want == "long" and broke_up and inside_band
+                fired_short = want == "short" and broke_dn and inside_band
+                if fired_long or fired_short:
+                    side = "long" if fired_long else "short"
+                    side_sign = 1 if fired_long else -1
+                    # Compute the screener's own internals at this bar, so the
+                    # sizing decision uses the strategy's actual signal context
+                    # (LM jump strength, multi-horizon agreement) rather than
+                    # generic bar-level statistics.
+                    pre = rets[: i]
+                    lm = lee_mykland_statistic(pre, window=24)
+                    if (side_sign > 0) != (lm > 0):
+                        # For HIST replay we may not have a screener pick at
+                        # every bar. Fall back to a neutral confidence so old
+                        # backtests still produce signals.
+                        lm = side_sign * abs(lm)
+                    agree = multi_horizon_alignment(pre, side_sign,
+                                                      horizons=(1, 4, 24))
                     sample = rets[max(0, i - 256): i]
                     decision = optimal_position(
-                        sample, cvar_floor=self.p.cvar_floor,
+                        sample,
+                        price=close, atr=atr_i,
+                        lm_stat=float(lm), agree=int(agree), max_agree=3,
+                        lm_threshold=self.p.lm_threshold,
+                        chandelier_mult=self.p.chandelier_mult,
+                        risk_per_trade=self.p.risk_per_trade,
+                        cvar_floor=self.p.cvar_floor,
                         cvar_alpha=self.p.cvar_alpha,
-                        target_vol=self.p.target_annual_vol,
-                        kelly_safety=self.p.kelly_safety,
-                        fraction_cap=self.p.sizing_cap,
+                        sizing_cap=self.p.sizing_cap,
                         leverage_cap=int(self.p.leverage_cap),
                     )
                     f = decision.fraction
-                    out.append(Signal(ts, df.attrs.get("symbol", ""), "long",
+                    reason = "donchian_break_up" if fired_long else "donchian_break_dn"
+                    out.append(Signal(ts, df.attrs.get("symbol", ""), side,
                                       SignalType.ENTRY, source, close, f,
-                                      "donchian_break_up",
+                                      reason,
                                       {"atr": atr_i, "yz": yz_i,
                                        "leverage": decision.leverage,
                                        "binding": decision.binding,
-                                       "f_kelly": decision.f_kelly,
-                                       "f_vol_target": decision.f_vol_target,
-                                       "f_cvar": decision.f_cvar}))
-                    position_side, entry_price, entry_idx = "long", close, i
-                    peak = close
-                elif want == "short" and broke_dn and inside_band:
-                    sample = rets[max(0, i - 256): i]
-                    decision = optimal_position(
-                        sample, cvar_floor=self.p.cvar_floor,
-                        cvar_alpha=self.p.cvar_alpha,
-                        target_vol=self.p.target_annual_vol,
-                        kelly_safety=self.p.kelly_safety,
-                        fraction_cap=self.p.sizing_cap,
-                        leverage_cap=int(self.p.leverage_cap),
-                    )
-                    f = decision.fraction
-                    out.append(Signal(ts, df.attrs.get("symbol", ""), "short",
-                                      SignalType.ENTRY, source, close, f,
-                                      "donchian_break_dn",
-                                      {"atr": atr_i, "yz": yz_i,
-                                       "leverage": decision.leverage,
-                                       "binding": decision.binding,
-                                       "f_kelly": decision.f_kelly,
-                                       "f_vol_target": decision.f_vol_target,
-                                       "f_cvar": decision.f_cvar}))
-                    position_side, entry_price, entry_idx = "short", close, i
-                    trough = close
+                                       "stop_pct": decision.stop_distance_pct,
+                                       "confidence": decision.confidence,
+                                       "lm": float(lm), "agree": int(agree)}))
+                    position_side, entry_price, entry_idx = side, close, i
+                    if fired_long:
+                        peak = close
+                    else:
+                        trough = close
             else:
                 # update trailing reference
                 if position_side == "long":

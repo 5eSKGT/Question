@@ -536,59 +536,99 @@ agree(h) = sign( pre_jump[-h:].sum() ) == sign(L_t)
 </div>
 
 <!-- ────────────────────────────────────────────────────────────────── -->
-<h2>최적 사이징 — Kelly + Vol-Target + CVaR + Optimal Leverage</h2>
+<h2>최적 사이징 — 전략과 직접 연동된 fixed-fractional risk</h2>
 
-<div class="card">
+<div class="card" style="border-left:4px solid var(--accent);background:#eef3ff">
 <p>
-  진입 시 <em>얼마</em>를 베팅할지, <em>몇 배</em> 레버리지를 쓸지를 단일 결정으로
-  통합한 모듈 (<code>crypto_trend/risk/sizing.py</code>) 입니다. 네 가지 직교
-  원칙을 합성한 뒤, 가장 보수적인 제약이 binding 되도록 합니다.
+  이전 버전에는 Kelly + Vol-Target + CVaR 합성을 썼지만, 그건 일반 포트폴리오
+  공식들의 단순 결합이었지 우리 전략의 <em>실제</em> 구성요소들을 반영하지 않았습니다.
+  <strong>지금은 모든 사이징 입력이 전략의 다른 부분과 1:1 매핑됩니다</strong> —
+  사이징 공식을 수치적으로 보면 전략의 행동이 그대로 들어가 있습니다.
 </p>
 
 <table>
-  <tr><th>원칙</th><th>출처</th><th>역할</th></tr>
-  <tr><td>Fractional Kelly  <code>f_K = μ̂ / σ̂² × safety</code></td>
-      <td>Kelly 1956 · Thorp 2006</td>
-      <td>로그 자산성장 최대화. safety = 0.5 (half-Kelly)</td></tr>
-  <tr><td>Volatility Targeting  <code>f_v = σ_target / σ_asset</code></td>
-      <td>Moreira &amp; Muir 2017 J Finance 72(4)</td>
-      <td>연환산 포트폴리오 변동성을 일정하게 (기본 20%)</td></tr>
-  <tr><td>CVaR Floor  <code>f_c = floor / CVaR_α</code></td>
-      <td>Rockafellar &amp; Uryasev 2000</td>
-      <td>한 포지션의 기대 부족손실 하한 강제</td></tr>
-  <tr><td>Optimal Leverage <code>L = ⌈f⌉ + 1, capped</code></td>
-      <td>—</td>
-      <td>목표 사이즈를 받쳐줄 가장 작은 정수 레버리지 → 펀딩 비용 최소화</td></tr>
+  <tr><th>전략 구성요소</th><th>사이징에서의 역할</th><th>수치적 연결</th></tr>
+  <tr><td><b>Chandelier 청산 거리</b><br/>= chandelier_mult × ATR / price</td>
+      <td>base size 의 <b>분모</b></td>
+      <td>stop-out 손실 = base × stop_pct = <code>risk_per_trade</code> 정확히</td></tr>
+  <tr><td><b>Lee-Mykland 점프 통계 \|L\|</b></td>
+      <td>신뢰도 배수 (×0.5 ~ ×2)</td>
+      <td>강한 점프 → 큰 포지션, 약한 점프 → 작은 포지션</td></tr>
+  <tr><td><b>다중 horizon 정합 수</b></td>
+      <td>신뢰도 배수 (×0.5 ~ ×1)</td>
+      <td>3/3 정합 → 풀 사이즈, 2/3 → 0.67×, 1/3 → 0.5×</td></tr>
+  <tr><td><b>CVaR_α 분포</b></td>
+      <td>방어막 cap</td>
+      <td>최근 256봉 분포가 비정상으로 살찐 꼬리면 사이즈 깎음</td></tr>
+  <tr><td><b>leverage_cap (commit)</b></td>
+      <td>레버리지 상한</td>
+      <td>Chandelier stop 거리에 따라 안전 레버리지 자동 계산</td></tr>
+  <tr><td><code>risk_per_trade</code> (commit)</td>
+      <td>유일한 $-단위 knob</td>
+      <td>한 트레이드 stop-out 시 잃을 자본 비율 (기본 1%)</td></tr>
 </table>
+</div>
 
-<pre>f* = min(f_K, f_v, f_c, fraction_cap)
-L  = optimal_leverage(f*, leverage_cap)        # 최소한의 마진 사용
-notional = equity · f*
-margin   = notional / L</pre>
+<h3>합성 공식</h3>
+<div class="card">
+<pre>stop_pct      = chandelier_mult · ATR / price                  ① Chandelier 와 직결
+base_size     = risk_per_trade / stop_pct                      ② fixed-fractional risk
+confidence    = clip(|L|/lm_thresh, 0.5, 2.0) ·
+                clip(agree/max_agree, 0.5, 1.0)                ③ 스크리너 신뢰도
+sized         = base_size · confidence                         ④
+sized        ≤ cvar_floor / CVaR_α        (defense-in-depth)   ⑤ 꼬리 보호
+leverage      = min( ⌊1/(stop_pct + maint + buffer)⌋,         ⑥ Chandelier ↔ 청산 안전
+                     ⌈sized⌉, leverage_cap )</pre>
+</div>
 
+<h3>핵심 결과 — 전략의 stop 과 risk 가 수치적으로 lock</h3>
+<div class="card">
 <p>
-  binding constraint 가 매번 기록되어 SignalDecision 객체에 담깁니다 — 백테스트 /
-  GUI 에서 "어느 제약이 가장 자주 binding 되는지" 분석 가능. 모든 합성 데이터
-  실험에서 일반적으로 <strong>Kelly 가 binding</strong> (보수적), 강한 점프
-  진입에서는 <strong>vol-target</strong>, 폭락 직후에는 <strong>CVaR</strong>
-  순으로 binding 우선순위가 바뀝니다.
+  ①+② 의 결과로, <strong>Chandelier 가 stop 인 한 한 트레이드의 손실은 자본의
+  정확히 <code>risk_per_trade × confidence</code></strong>입니다 — 자산이
+  변동성이 크든 작든, 진입가가 어떻든. 전략의 다른 어떤 구성요소를 바꿔도 이
+  수학적 invariant 가 유지됩니다.
+</p>
+<p>예시 (ATR=2%, 가격=100):</p>
+<ul>
+  <li>stop_pct = 3 × 2/100 = <b>6%</b></li>
+  <li>base_size = 1% / 6% = <b>0.167</b> (자본의 16.7%)</li>
+  <li>confidence (|L|=4, agree=2/3) = 1.0 × 0.67 = <b>0.67</b></li>
+  <li>sized = 0.167 × 0.67 = <b>0.112</b> (자본의 11.2%)</li>
+  <li>stop-out 손실 = 0.112 × 6% = <b>0.67%</b> = risk_per_trade × confidence ✓</li>
+  <li>레버리지 = sized < 1 이므로 <b>1×</b> (현물)</li>
+</ul>
+</div>
+
+<h3>Optimal Leverage — Chandelier 과 청산가 사이의 안전 거리 보장</h3>
+<div class="card">
+<p>
+  레버리지를 <em>임의로</em> 정하지 않고 Chandelier stop 거리에서 역산합니다 :
+</p>
+<pre>required_margin = stop_pct + maintenance(0.5%) + safety_buffer(2%)
+max_safe_lev    = ⌊1 / required_margin⌋
+leverage        = min(max_safe_lev, ⌈sized⌉, leverage_cap)</pre>
+<p>
+  이렇게 하면 <strong>청산 가격이 항상 Chandelier stop 보다 멀리</strong>
+  있도록 보장됩니다 — 즉 전략이 stop 을 발동하기 전에 거래소가 청산하는
+  사고가 구조적으로 불가능합니다. 예: stop_pct = 6% → max_safe_lev = ⌊1/(0.06+0.005+0.02)⌋
+  = ⌊11.76⌋ = 11×. sized = 0.112 < 1 이면 그래도 레버리지 1× 유지 (불필요한
+  레버리지는 펀딩비만 추가됨).
 </p>
 </div>
 
-<h3>전략과의 시너지</h3>
+<h3>학술적 근거</h3>
 <div class="card">
 <ul>
-  <li><strong>Lee-Mykland 점프 검출 ↔ Kelly</strong> — LM 통계량이 큰 바일수록
-    σ̂ 는 BV 로 안정적이고 r_t 만 폭증해서 μ̂ 가 한 시점에 튐. half-Kelly 안전계수가
-    이 단발성 추정 잡음을 흡수합니다.</li>
-  <li><strong>Yang-Zhang 파동 밴드 ↔ Vol-Target</strong> — 같은 σ_asset 추정량이
-    진입 게이트와 사이징에 동시에 들어가 일관성이 보장됩니다.</li>
-  <li><strong>screener 의 256 봉 윈도우 ↔ CVaR</strong> — 동일 표본을 공유해서
-    학술적 일관성 유지.</li>
-  <li><strong>Optimal Leverage</strong> — Bitget USDT-Perp 의 펀딩이 8h 마다
-    누적되므로, 더 낮은 레버리지가 같은 노출을 더 적은 펀딩비로 달성합니다.
-    <code>f* ≤ 1</code> 이면 <strong>레버리지 1×</strong> (no leverage), <code>1 &lt; f* ≤ cap</code> 이면
-    <code>⌈f*⌉ + 1</code> (한 단계 여유) 로 자동 결정.</li>
+  <li><b>fixed-fractional risk</b> — van Tharp (2007), <em>Definitive Guide
+    to Position Sizing</em>; Covel (2009), <em>Trend Following</em>, Ch. 12.
+    추세추종 시스템에서 학술적으로 가장 검증된 사이징 방식.</li>
+  <li><b>LM-driven confidence</b> — Lee &amp; Mykland (2008), RFS 21(6).
+    동일 통계량이 진입 필터와 사이즈 배수 양쪽에 들어가 일관성 보장.</li>
+  <li><b>다중 horizon 정합</b> — Moskowitz, Ooi &amp; Pedersen (2012),
+    JFE 104(2). 시계열 모멘텀의 강도가 곧 사이징의 비례 항.</li>
+  <li><b>CVaR cap</b> — Rockafellar &amp; Uryasev (2000). 정상 분포 가정이
+    깨질 때만 binding 되는 방어막.</li>
 </ul>
 </div>
 
