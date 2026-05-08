@@ -1,0 +1,76 @@
+Real-data universe: 313 symbols, ~4188 bars each
+
+=== Canonical (committed) StrategyParams ===
+  seed  0: AP ret=+0.048 sr=+3.02 mdd=-0.042 trades=101
+  median_sharpe = +3.025 (PASS)
+  p95_mdd       = -0.042 (PASS)
+  AP sortino    = +3.029  vs Naive -1.010 (PASS)
+  median_trades = 101.0 (PASS)
+  win_rate      = 0.475 (over 101 trades) (PASS)
+  → ✅ ALL PASS
+
+=== Parameter robustness (±20%) ===
+
+=== risk_per_trade −20% ===
+  seed  0: AP ret=+0.038 sr=+3.02 mdd=-0.034 trades=101
+  median_sharpe = +3.025 (PASS)
+  p95_mdd       = -0.034 (PASS)
+  AP sortino    = +3.029  vs Naive -1.010 (PASS)
+  median_trades = 101.0 (PASS)
+  win_rate      = 0.475 (over 101 trades) (PASS)
+  → ✅ ALL PASS
+
+=== risk_per_trade +20% ===
+  seed  0: AP ret=+0.057 sr=+3.02 mdd=-0.050 trades=101
+  median_sharpe = +3.025 (PASS)
+  p95_mdd       = -0.050 (PASS)
+  AP sortino    = +3.029  vs Naive -1.010 (PASS)
+  median_trades = 101.0 (PASS)
+  win_rate      = 0.475 (over 101 trades) (PASS)
+  → ✅ ALL PASS
+
+=== conf_exp 1.5 ===
+  seed  0: AP ret=+0.072 sr=+3.97 mdd=-0.046 trades=101
+  median_sharpe = +3.969 (PASS)
+  p95_mdd       = -0.046 (PASS)
+  AP sortino    = +4.259  vs Naive -1.010 (PASS)
+  median_trades = 101.0 (PASS)
+  win_rate      = 0.475 (over 101 trades) (PASS)
+  → ✅ ALL PASS
+
+=== conf_exp 2.5 ===
+  seed  0: AP ret=+0.027 sr=+1.74 mdd=-0.043 trades=101
+  median_sharpe = +1.738 (PASS)
+  p95_mdd       = -0.043 (PASS)
+  AP sortino    = +1.586  vs Naive -1.010 (PASS)
+  median_trades = 101.0 (PASS)
+  win_rate      = 0.475 (over 101 trades) (PASS)
+  → ✅ ALL PASS
+
+=== tsm_lookback 480 ===
+  seed  0: AP ret=+0.075 sr=+4.87 mdd=-0.045 trades=90
+  median_sharpe = +4.867 (PASS)
+  p95_mdd       = -0.045 (PASS)
+  AP sortino    = +5.515  vs Naive -1.010 (PASS)
+  median_trades = 90.0 (FAIL)
+  win_rate      = 0.478 (over 90 trades) (PASS)
+  → ❌ FAIL
+
+=== tsm_lookback 960 ===
+  seed  0: AP ret=+0.060 sr=+3.56 mdd=-0.063 trades=138
+  median_sharpe = +3.562 (PASS)
+  p95_mdd       = -0.063 (PASS)
+  AP sortino    = +4.046  vs Naive -1.010 (PASS)
+  median_trades = 138.0 (PASS)
+  win_rate      = 0.449 (over 138 trades) (PASS)
+  → ✅ ALL PASS
+
+=== Robustness summary ===
+  risk_per_trade −20%: PASS
+  risk_per_trade +20%: PASS
+  conf_exp 1.5: PASS
+  conf_exp 2.5: PASS
+  tsm_lookback 480: FAIL
+  tsm_lookback 960: PASS
+
+=== FINAL VERDICT: ❌ DO NOT PROMOTE ===

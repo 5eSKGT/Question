@@ -1,0 +1,28 @@
+{
+  "canonical": {
+    "median_sharpe": 3.0245696544375726,
+    "p95_mdd": -0.04216806970659204,
+    "median_sortino": 3.0289640879299293,
+    "median_nm_sortino": -1.0095872600545883,
+    "median_trades": 101.0,
+    "win_rate": 0.4752475247524752,
+    "n_total_trades": 101,
+    "passes": {
+      "median_sharpe": true,
+      "p95_mdd": true,
+      "sortino_vs_naive": true,
+      "trade_count": true,
+      "win_rate": true
+    },
+    "all_pass": true
+  },
+  "perturbations": {
+    "risk_per_trade \u221220%": true,
+    "risk_per_trade +20%": true,
+    "conf_exp 1.5": true,
+    "conf_exp 2.5": true,
+    "tsm_lookback 480": false,
+    "tsm_lookback 960": true
+  },
+  "overall_pass": false
+}
