@@ -1,8 +1,14 @@
-"""Runtime configuration loaded from environment / .env."""
+"""Runtime configuration loaded from environment / .env, runtime-mutable.
+
+The desktop GUI overrides fields via :func:`apply` *before* the engine starts —
+this is how mode toggling and API-key entry from the UI take effect without
+restarting the process.  Fields are typed; setattr enforces nothing at runtime
+but the GUI validates upstream.
+"""
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import Enum
 from pathlib import Path
 
@@ -14,6 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STATE_DIR = PROJECT_ROOT / "state"
 LOG_DIR = PROJECT_ROOT / "logs"
 CACHE_DIR = PROJECT_ROOT / "data" / "cache"
+ASSETS_DIR = Path(__file__).resolve().parent / "desktop" / "assets"
 for _d in (STATE_DIR, LOG_DIR, CACHE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
@@ -42,8 +49,8 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
-@dataclass(frozen=True)
-class Settings:
+@dataclass
+class Settings:                 # NOTE: not frozen — GUI mutates at runtime
     mode: TradingMode
     api_key: str
     api_secret: str
@@ -63,6 +70,9 @@ class Settings:
     @property
     def is_live(self) -> bool:
         return self.mode == TradingMode.LIVE
+
+    def has_credentials(self) -> bool:
+        return bool(self.api_key and self.api_secret and self.api_passphrase)
 
 
 def load_settings() -> Settings:
@@ -88,3 +98,15 @@ def load_settings() -> Settings:
 
 
 SETTINGS = load_settings()
+
+
+def apply(**overrides) -> Settings:
+    """Mutate the singleton from the GUI; unknown keys raise."""
+    valid = {f.name for f in fields(SETTINGS)}
+    for k, v in overrides.items():
+        if k not in valid:
+            raise KeyError(f"unknown setting: {k}")
+        if k == "mode" and not isinstance(v, TradingMode):
+            v = TradingMode.LIVE if str(v).lower() == "live" else TradingMode.PAPER
+        setattr(SETTINGS, k, v)
+    return SETTINGS
