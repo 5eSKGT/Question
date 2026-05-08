@@ -113,48 +113,79 @@ def test_no_screener_context_keeps_noise_filter():
     assert isinstance(last_bar_entries, list)
 
 
-def test_graded_exposure_max_leverage_at_two():
-    """sizing_cap=1.5 + max confidence (LM=8, agree=3/3) must yield
-    leverage ≤ 2, not the previous accidental 3."""
+def test_conviction_power_amp_cubic():
+    """Cubic conviction grading: amp = confidence^3, giving 64× ratio
+    between weak (0.25) and max (2.0) signals."""
+    from crypto_trend.risk.sizing import conviction_power_amp
+    assert abs(conviction_power_amp(0.25, 3.0) - 0.0156) < 1e-3
+    assert abs(conviction_power_amp(1.0, 3.0) - 1.0) < 1e-9
+    assert abs(conviction_power_amp(2.0, 3.0) - 8.0) < 1e-9
+    # 64× ratio
+    ratio = conviction_power_amp(2.0, 3.0) / conviction_power_amp(0.5, 3.0)
+    assert abs(ratio - 64.0) < 1e-6
+
+
+def test_optimal_position_64x_sizing_range():
+    """End-to-end: weak vs max conviction produce ~64× sizing ratio
+    (cubic exponent), so capital concentrates on max-conv trades."""
     from crypto_trend.risk.sizing import optimal_position
     rng = np.random.default_rng(3)
     rets = rng.normal(0, 0.01, 500)
-    decision = optimal_position(
-        rets, price=100, atr=2.0,
-        lm_stat=8.0, agree=3, max_agree=3,                # max confidence
-        risk_per_trade=0.01, cvar_floor=-0.50,
-        sizing_cap=1.5, leverage_cap=3,
-        lm_threshold=4.0, chandelier_mult=3.0,
-    )
-    assert decision.fraction <= 1.5
-    assert decision.leverage <= 2, (
-        f"sizing_cap=1.5 must keep leverage ≤ 2, got {decision.leverage}")
+    common = dict(price=100.0, atr=2.0, max_agree=3,
+                   risk_per_trade=0.005, cvar_floor=-0.99,
+                   sizing_cap=5.0, leverage_cap=10,
+                   lm_threshold=4.0, chandelier_mult=3.0,
+                   confidence_exponent=3.0)
+
+    weak = optimal_position(rets, lm_stat=1.0, agree=1, **common)
+    medium = optimal_position(rets, lm_stat=4.0, agree=2, **common)
+    very_strong = optimal_position(rets, lm_stat=8.0, agree=3, **common)
+
+    # Position monotone in conviction
+    assert weak.fraction < medium.fraction < very_strong.fraction
+    # Cubic ratio (clipped at 64× by conviction min/max)
+    assert very_strong.fraction / max(weak.fraction, 1e-9) > 30, (
+        f"cubic conviction grading must give ≥30× sizing range, "
+        f"got {very_strong.fraction / max(weak.fraction, 1e-9):.1f}×")
 
 
-def test_graded_exposure_weak_signal_smaller_position():
-    """A weaker signal (lower LM, fewer horizons) must produce a
-    smaller position than a strong signal under identical conditions —
-    that is the whole point of graded Kelly exposure."""
+def test_leverage_scales_with_tight_stops_and_max_conviction():
+    """Tight stops + max conviction must produce leverage > 3, the
+    user's ceiling complaint. With cubic amp + sizing_cap=5 the
+    strongest signals on tight stops deploy 5-10× leverage naturally."""
     from crypto_trend.risk.sizing import optimal_position
     rng = np.random.default_rng(4)
-    rets = rng.normal(0, 0.01, 500)
-    common = dict(returns=rets, price=100.0, atr=2.0,
-                   risk_per_trade=0.01, cvar_floor=-0.50,
-                   sizing_cap=1.5, leverage_cap=3,
-                   lm_threshold=4.0, chandelier_mult=3.0)
-    # `optimal_position(returns, *, ...)` — first positional, rest kw
-    weak = optimal_position(rets,
-                              price=100.0, atr=2.0,
-                              lm_stat=2.0, agree=1, max_agree=3,
-                              risk_per_trade=0.01, cvar_floor=-0.50,
-                              sizing_cap=1.5, leverage_cap=3,
-                              lm_threshold=4.0, chandelier_mult=3.0)
-    strong = optimal_position(rets,
-                                price=100.0, atr=2.0,
-                                lm_stat=8.0, agree=3, max_agree=3,
-                                risk_per_trade=0.01, cvar_floor=-0.50,
-                                sizing_cap=1.5, leverage_cap=3,
-                                lm_threshold=4.0, chandelier_mult=3.0)
-    assert strong.fraction > weak.fraction, (
-        f"strong signal must size larger than weak — "
-        f"got weak={weak.fraction:.3f} vs strong={strong.fraction:.3f}")
+    rets = rng.normal(0, 0.005, 500)
+    # Very tight stop (ATR=0.3% → stop_pct ≈ 0.9%)
+    tight = optimal_position(
+        rets, price=100.0, atr=0.3,
+        lm_stat=8.0, agree=3, max_agree=3,
+        risk_per_trade=0.005, cvar_floor=-0.99,
+        sizing_cap=5.0, leverage_cap=10,
+        lm_threshold=4.0, chandelier_mult=3.0,
+        confidence_exponent=3.0,
+    )
+    assert tight.leverage > 3, (
+        f"max-conviction trade on a tight stop must use leverage > 3, "
+        f"got {tight.leverage}× — the conviction-power Kelly is not "
+        f"reaching the leverage range the user demanded.")
+
+
+def test_weak_signal_essentially_no_bet():
+    """The flip side of cubic conviction grading: weak signals must
+    risk almost nothing (the noise-protection benefit)."""
+    from crypto_trend.risk.sizing import optimal_position
+    rng = np.random.default_rng(5)
+    rets = rng.normal(0, 0.005, 500)
+    weak = optimal_position(
+        rets, price=100.0, atr=2.0,
+        lm_stat=1.0, agree=1, max_agree=3,         # weakest possible
+        risk_per_trade=0.005, cvar_floor=-0.99,
+        sizing_cap=5.0, leverage_cap=10,
+        lm_threshold=4.0, chandelier_mult=3.0,
+        confidence_exponent=3.0,
+    )
+    loss_on_stop = weak.fraction * weak.stop_distance_pct
+    assert loss_on_stop < 0.001, (        # < 0.1% per trade
+        f"weak signal must risk < 0.1% of equity, got {loss_on_stop:.5f}")
+    assert weak.leverage == 1

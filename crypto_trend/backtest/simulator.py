@@ -258,6 +258,7 @@ class StrategySimulator:
                     cvar_alpha=p.cvar_alpha,
                     sizing_cap=p.sizing_cap,
                     leverage_cap=int(p.leverage_cap),
+                    confidence_exponent=p.confidence_exponent,
                 )
                 size = decision.fraction
                 if size <= 0:

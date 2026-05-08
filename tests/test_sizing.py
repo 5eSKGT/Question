@@ -85,19 +85,22 @@ def test_safe_leverage_one_when_unleveraged():
 
 
 def test_optimal_position_stop_synergy():
-    """Stop-out P&L (size × stop_pct) ≈ risk_per_trade × confidence,
-    so the per-trade risk is mechanically tied to Chandelier_mult × ATR."""
+    """Stop-out P&L (size × stop_pct) ≈ risk_per_trade × confidence^k,
+    where k=confidence_exponent (cubic by default). The conviction-
+    power Kelly amplifier makes loss-on-stop scale aggressively with
+    signal strength, but the equality stop_loss = risk × amp(conf)
+    remains exact."""
     rng = np.random.default_rng(0)
     rets = rng.normal(0, 0.01, 300)
     decision = optimal_position(
-        rets, price=100, atr=2.0,        # stop 6%
+        rets, price=100, atr=2.0,
         lm_stat=4.0, agree=2, max_agree=3,
-        risk_per_trade=0.01, cvar_floor=-0.5,    # CVaR loose
+        risk_per_trade=0.01, cvar_floor=-0.5,
         sizing_cap=5.0, leverage_cap=10,
         lm_threshold=4.0, chandelier_mult=3.0,
+        confidence_exponent=3.0,
     )
-    # Stop-out loss = fraction × stop = 0.01 × confidence
-    expected_loss = 0.01 * decision.confidence
+    expected_loss = 0.01 * (decision.confidence ** 3.0)
     realised_loss = decision.fraction * decision.stop_distance_pct
     assert math.isclose(realised_loss, expected_loss, rel_tol=0.05)
 

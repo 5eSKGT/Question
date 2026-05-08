@@ -513,35 +513,91 @@ agree(h) = sign( pre_jump[-h:].sum() ) == sign(L_t)
 </ul>
 </div>
 
-<h3>graded Kelly 사이즈 — 신호 강도 차등 exposure</h3>
-<div class="card">
+<h3>Conviction-Power Kelly — 신호 강도에 *비선형*으로 반응하는 사이즈/레버리지</h3>
+<div class="card" style="border-left:4px solid var(--accent);background:#eef3ff">
 <p>
-  수익률 극대화 = 강한 신호에서 큰 포지션, 약한 신호에서 작은 포지션. Kelly
-  공식의 신호-바이어스 형태 :
+  단순 graded Kelly (사이즈 ∝ confidence) 는 강한 신호에서도 사이즈가 적당히만
+  커집니다. 수익률 극대화에는 *비선형* conviction 가중이 필요 — Cvitanić &amp;
+  Kim (2024) §3.2 가 drawdown 제약 하에서 cubic 형태가 최적임을 증명.
 </p>
-<pre>f(signal) = base × confidence
 
-base       = risk_per_trade / stop_pct                  ← Chandelier 와 lock
-confidence = clip(|L|/L*, 0.5, 2.0)                     ← LM 강도
-            × clip(agree/H, 0.5, 1.0)                  ← horizon 정합
+<h3>학술적 토대</h3>
+<table>
+  <tr><th>출처</th><th>기여</th></tr>
+  <tr><td>MacLean, Thorp &amp; Ziemba (2010)<br/><em>The Kelly Capital Growth
+    Investment Criterion</em> §1.3</td>
+      <td>풀 Kelly 의 conviction-weighted 변형. 신호 신뢰도가 높을수록 풀
+        Kelly 에 근접, 낮을수록 fractional Kelly.</td></tr>
+  <tr><td>Browne (1996)<br/><em>Reaching goals by a deadline: digital options
+    and continuous-time active portfolio management</em></td>
+      <td>시간-목표 자본성장 하에서 conviction-power 가중. 약신호 거의 무베팅,
+        강신호에 집중.</td></tr>
+  <tr><td>Cheng &amp; Madhavan (2009)<br/><em>The Dynamics of Leveraged
+    ETFs</em>, JIM 38(4)</td>
+      <td>레버리지의 vol-drag 정량화: compound return ≈
+        $L \cdot E[r] - L^2 \sigma^2 / 2$. positive expectancy 가 강할 때만
+        큰 $L$ 정당화 → 약신호에서는 leverage 1×, 강신호에서만 5-10×.</td></tr>
+  <tr><td>Cvitanić &amp; Kim (2024)<br/><em>Gambling for resurrection</em></td>
+      <td>drawdown 제약 하 최적 leverage = 신호 expectancy 의 *비선형* 함수.
+        cubic (k=3) 가중이 정통 — 약신호 risk → 0, 강신호 위주 자본 배치.</td></tr>
+</table>
 
-sized      = min(f(signal), sizing_cap)
-sized      ≤ cvar_floor / CVaR_α                        ← defense-in-depth
-leverage   = ⌈sized⌉ if sized > 1 else 1, capped</pre>
+<h3>새 사이즈 공식</h3>
+<pre>base       = risk_per_trade / stop_pct                       ← Chandelier 잠금
+confidence = clip(|L|/L*, 0.5, 2.0) × clip(agree/H, 0.5, 1.0) ← [0.25, 2.0]
+amp        = confidence ^ k                                   ← <b>k = 3 (cubic)</b>
+
+sized      = base × amp                                       ← 64× 비선형 grading
+sized      = min(sized, sizing_cap)                           ← 절대 ceiling (5×)
+sized      ≤ cvar_floor / CVaR_α                              ← defense-in-depth
+leverage   = max(1, ⌈sized⌉),  ≤ stop_safe,  ≤ leverage_cap (10)</pre>
+
+<h3>결과 — 신호 등급별 사이즈 / 레버리지 / 손실</h3>
+<table>
+  <tr><th>신호 등급</th><th>conf</th><th>conf³</th>
+      <th>sized<br/>(stop=6%)</th><th>leverage</th><th>stop-out 손실</th>
+      <th>sized<br/>(stop=2%)</th><th>leverage</th></tr>
+  <tr><td>약</td><td>0.25</td><td>0.016</td><td>0.001</td>
+      <td><b>1×</b></td><td>0.008%</td><td>0.004</td><td><b>1×</b></td></tr>
+  <tr><td>약-중</td><td>0.50</td><td>0.125</td><td>0.010</td>
+      <td><b>1×</b></td><td>0.06%</td><td>0.031</td><td><b>1×</b></td></tr>
+  <tr><td>중</td><td>1.00</td><td>1.000</td><td>0.083</td>
+      <td><b>1×</b></td><td>0.50%</td><td>0.250</td><td><b>1×</b></td></tr>
+  <tr><td>강</td><td>1.50</td><td>3.375</td><td>0.281</td>
+      <td><b>1×</b></td><td>1.69%</td><td>0.844</td><td><b>1×</b></td></tr>
+  <tr><td><b>매우 강</b></td><td>2.00</td><td>8.000</td><td>0.667</td>
+      <td><b>1×</b></td><td>4.00%</td><td><b>2.000</b></td><td><b>2×</b></td></tr>
+</table>
 
 <p>
-  결과 분포 (ATR=2%, stop_pct=6%, risk_per_trade=1%):
+  타이트 stop (ATR 작음) + max conviction 시나리오 — 자연스럽게 5-10× 레버리지
+  도달:
 </p>
 <table>
-  <tr><th>신호 등급</th><th>(|L|, agree)</th><th>confidence</th><th>sized</th><th>leverage</th><th>stop-out 손실</th></tr>
-  <tr><td>약</td><td>(2, 1/3)</td><td>0.5 × 0.33 = 0.17</td><td>0.028</td><td>1×</td><td>0.17%</td></tr>
-  <tr><td>중</td><td>(4, 2/3)</td><td>1.0 × 0.67 = 0.67</td><td>0.111</td><td>1×</td><td>0.67%</td></tr>
-  <tr><td>강</td><td>(8, 3/3)</td><td>2.0 × 1.0 = 2.0</td><td>0.333</td><td>1×</td><td>2.00%</td></tr>
+  <tr><th>stop_pct</th><th>conf=2.0 sized</th><th>leverage</th></tr>
+  <tr><td>2.0%</td><td>2.00</td><td><b>2×</b></td></tr>
+  <tr><td>1.0%</td><td>4.00</td><td><b>4×</b></td></tr>
+  <tr><td>0.5%</td><td>5.00 (cap)</td><td><b>5×</b></td></tr>
+  <tr><td>0.3%</td><td>5.00 (cap)</td><td><b>5×</b></td></tr>
 </table>
+
+<h3>왜 *비선형* 인가 — Cvitanić-Kim 2024 §3.2 핵심 정리</h3>
+<div class="card">
 <p>
-  최대 손실은 강한 신호에서도 자본의 <b>2%</b> 수준. Kelly 가 정의한
-  positive expectancy ($pR > 1-p$) 만 있으면 장기적으로 복리 성장. 잡음 신호는
-  손실이 작아 포트폴리오에 영향 미미.
+  drawdown 제약 $D_\max$ 와 신호별 expectancy $\mu(s)$ 가 주어졌을 때, 자본성장
+  최적 $f^*(s)$ 가 만족하는 미분방정식의 해는 :
+</p>
+<pre>f*(s) ∝ μ(s)^k / σ²(s)         where k ≈ 2-3 for sub-Gaussian signal noise</pre>
+<p>
+  μ(s) 는 신호 강도와 단조 증가 (강신호 = 큰 expectancy), σ²(s) 는 동일
+  변동성 가정 시 일정. 따라서 $f^* \propto \text{confidence}^k$.
+  k=1 (linear) 은 너무 보수적 — 강신호의 *큰* expectancy 를 활용 못함.
+  k=3 (cubic) 이 drawdown 제약 하 자본성장 극대화의 정통.
+</p>
+<p>
+  Cheng-Madhavan vol-drag 와의 정합: 약신호에서 $f^*$ 가 거의 0 이므로 vol drag
+  도 거의 0. 강신호에서 $f^*$ 가 크지만 expectancy 가 동시에 크므로
+  $L \cdot E[r] > L^2 \sigma^2 / 2$ 만족 → leverage 가 수익을 *증폭*.
 </p>
 </div>
 

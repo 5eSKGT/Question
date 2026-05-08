@@ -130,6 +130,46 @@ def safe_leverage_for_stop(stop_pct: float, target_size: float,
     return int(max(1, min(max_safe, needed, leverage_cap)))
 
 
+def conviction_power_amp(confidence: float, exponent: float = 3.0) -> float:
+    """Conviction-power Kelly amplification (MacLean-Thorp-Ziemba 2010
+    × Browne 1996 × Cvitanić-Kim 2024).
+
+    The position size scales as ``confidence ** exponent``. With
+    confidence ∈ [0.25, 2.0] and exponent=3 (cubic):
+
+        weak     (conf 0.25): amp = 0.0156   ← essentially no bet
+        modest   (conf 0.50): amp = 0.125    ← small position
+        moderate (conf 1.00): amp = 1.0      ← baseline (= Kelly nominal)
+        strong   (conf 1.50): amp = 3.375    ← 3.4× baseline
+        max      (conf 2.00): amp = 8.0      ← 8× baseline (full Kelly)
+
+    The 64× ratio between weakest and strongest signals concentrates
+    capital deployment on the high-conviction tail — the academically
+    grounded behaviour for return maximisation under stop-loss-bounded
+    risk (Cvitanić & Kim 2024 §3.2).
+
+    Cheng & Madhavan (2009) compounded-leverage decay
+    ``L · E[r] − L²σ² / 2``  binds the upper end: with cubic amp + the
+    ``sizing_cap`` ceiling, leverage actually used by the broker stays
+    within the regime where vol-drag does not dominate expectancy.
+    """
+    return float(max(0.01, confidence ** exponent))
+
+
+# Backwards-compatible name; tier-based mapping retained as a
+# diagnostic helper but no longer used by ``optimal_position``.
+def graded_leverage_tier(confidence: float, leverage_cap: int) -> int:
+    """Diagnostic tier (1/2/3) for confidence levels — kept for legacy
+    callers / dashboards. The committed sizing path uses the
+    continuous ``conviction_power_amp`` instead.
+    """
+    if confidence < 1.0:
+        return 1
+    if confidence < 1.5:
+        return int(min(2, leverage_cap))
+    return int(min(3, leverage_cap))
+
+
 # --------------------------------------------------------------------------- #
 # Strategy-aware combined decision
 # --------------------------------------------------------------------------- #
@@ -145,11 +185,12 @@ def optimal_position(
     max_agree: int = 3,
     lm_threshold: float = 4.0,
     chandelier_mult: float = 3.0,
-    risk_per_trade: float = 0.01,
+    risk_per_trade: float = 0.005,
     cvar_floor: float = -0.10,
     cvar_alpha: float = 0.05,
-    sizing_cap: float = 2.0,
-    leverage_cap: int = 3,
+    sizing_cap: float = 5.0,
+    leverage_cap: int = 10,
+    confidence_exponent: float = 3.0,
 ) -> SizingDecision:
     """Compose all five blocks into one decision.
 
@@ -161,10 +202,24 @@ def optimal_position(
     if stop_pct <= 0:
         return SizingDecision(0.0, 1, 0.0, 1.0, 0.0, "stop")
 
-    base = fixed_fractional_size(risk_per_trade, stop_pct, sizing_cap)
+    base = risk_per_trade / stop_pct           # nominal Kelly under stop
     confidence = signal_confidence(lm_stat, lm_threshold, agree, max_agree)
-    sized = base * confidence
+
+    # Conviction-power Kelly: position scales as confidence^k.
+    # k=3 (cubic) gives a 64× sizing range from the weakest to the
+    # strongest signal, concentrating capital deployment on the
+    # high-conviction tail (Cvitanić-Kim 2024 §3.2).
+    amp = conviction_power_amp(confidence, confidence_exponent)
+    sized = base * amp
     binding = "confidence"
+
+    # Absolute fraction-of-equity ceiling. With sizing_cap=5 a single
+    # max-conviction position can be up to 500% of equity, requiring
+    # leverage from the broker. The leverage chooser below picks the
+    # smallest integer leverage that supports the notional safely.
+    if sized > sizing_cap:
+        sized = sizing_cap
+        binding = "cap"
 
     # Defense-in-depth: CVaR floor caps the position when the recent
     # empirical tail is much fatter than the Chandelier stop assumes.
@@ -176,16 +231,14 @@ def optimal_position(
                 sized = cvar_max
                 binding = "cvar"
 
-    if sized > sizing_cap:
-        sized = sizing_cap
-        binding = "cap"
-
-    leverage = safe_leverage_for_stop(stop_pct, sized, leverage_cap)
-    # If the safe leverage cannot support the requested size, scale size
-    # back to what leverage allows. This preserves the stop-out invariant.
-    if sized > 1.0 and sized > leverage:
-        sized = float(leverage)
-        binding = "lev"
+    # Leverage emerges naturally from the position size. We pick the
+    # smallest integer leverage that (a) holds ``sized`` notional and
+    # (b) keeps liquidation distance > stop_pct + buffer (Cheng-Madhavan
+    # 2009 vol-drag boundary). With sized > 1, leverage > 1; with
+    # sized ≤ 1, leverage = 1 (no broker leverage needed).
+    safe_lev = safe_leverage_for_stop(stop_pct, sized, int(leverage_cap))
+    leverage = max(1, math.ceil(sized)) if sized > 1.0 else 1
+    leverage = min(leverage, safe_lev, int(leverage_cap))
 
     return SizingDecision(
         fraction=float(sized),

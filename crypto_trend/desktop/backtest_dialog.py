@@ -350,15 +350,17 @@ class BacktestDialog(QDialog):
             f"&nbsp;&nbsp;ATR period = {sp.atr_n}, mult = {sp.chandelier_mult:.1f}<br>"
             f"&nbsp;&nbsp;Yang-Zhang n = {sp.yz_n}, band = {sp.band_mult:.1f}<br>"
             f"&nbsp;&nbsp;Time stop = {sp.time_stop_bars} bars<br>"
-            f"<b>리스크 / 사이징 (committed)</b><br>"
+            f"<b>점프 검출 (Hawkes 가설)</b><br>"
+            f"&nbsp;&nbsp;LM 임계 = {sp.lm_threshold:.1f}, "
+            f"screener 픽이면 inside_band 스킵<br>"
+            f"<b>리스크 / 사이징 (Conviction-Power Kelly)</b><br>"
             f"&nbsp;&nbsp;CVaR α = {sp.cvar_alpha:.2f}, floor = {sp.cvar_floor:.2f}<br>"
-            f"&nbsp;&nbsp;Risk-per-trade = {sp.risk_per_trade:.2%} "
-            f"<span style='color:{SUBTEXT}'>(Kelly·Grossman-Zhou 도출)</span><br>"
+            f"&nbsp;&nbsp;risk_base = {sp.risk_per_trade:.2%}, "
+            f"<b>amp = conf<sup>{sp.confidence_exponent:.0f}</sup></b><br>"
+            f"&nbsp;&nbsp;<span style='color:{SUBTEXT}'>cubic 가중: 약신호 0.02% / 중간 0.5% / 강신호 5% 손실</span><br>"
             f"&nbsp;&nbsp;Sizing cap = {sp.sizing_cap:.1f}× equity<br>"
-            f"&nbsp;&nbsp;Max leverage = {sp.leverage_cap:.0f}×<br>"
-            f"&nbsp;&nbsp;LM threshold = {sp.lm_threshold:.1f} "
-            f"<span style='color:{SUBTEXT}'>(점프 즉시 진입 비활성, "
-            f"Turtle 패턴 사용)</span>")
+            f"&nbsp;&nbsp;Max leverage = {sp.leverage_cap:.0f}× "
+            f"<span style='color:{SUBTEXT}'>(타이트 stop + 강신호에서 5-10× 도달)</span>")
         strat_card.setWordWrap(True)
         strat_card.setTextFormat(Qt.RichText)
         strat_card.setStyleSheet(

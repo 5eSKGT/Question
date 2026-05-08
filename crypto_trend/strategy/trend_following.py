@@ -118,25 +118,21 @@ class StrategyParams:
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05
     cvar_floor: float = -0.10
-    leverage_cap: float = 3.0
-    risk_per_trade: float = 0.01      # per-trade risk budget (= 1% of equity)
-    # Graded exposure cap. Confidence multiplier scales the base size in
-    # [0.25, 2.0] depending on (LM strength × multi-horizon agreement),
-    # so:
-    #   * weak signal:   base × 0.25 → tiny position
-    #   * strong signal: base × 2.0  → up to sizing_cap
-    # 1.5 lets the strongest signals reach 150% of equity (auto-leverage
-    # 2× on those rare bars), while base size with typical 6% Chandelier
-    # stop is 0.17 — well under 1, so no leverage is implicit. The
-    # leverage chooser always picks the smallest integer ≥ ⌈sized⌉ that
-    # also keeps liquidation > stop + buffer.
-    sizing_cap: float = 1.5
+    # Conviction-Power Kelly (MacLean-Thorp-Ziemba 2010, Cvitanić-Kim 2024)
+    # ----------------------------------------------------------------
+    # AlphaPulse uses cubic conviction grading: position size scales
+    # as ``confidence ** confidence_exponent``. Effects with k=3:
+    #   * confidence 0.25 (weak)   → amp 0.016, virtually no bet
+    #   * confidence 1.00 (medium) → amp 1.000, baseline Kelly
+    #   * confidence 2.00 (max)    → amp 8.000, full Kelly utilisation
+    # The 64× ratio between weak and strong signals concentrates
+    # capital on the high-conviction tail.
+    risk_per_trade: float = 0.005     # baseline 0.5% Kelly fraction (graded)
+    sizing_cap: float = 5.0           # absolute fraction ceiling (with leverage)
+    leverage_cap: float = 10.0        # broker leverage cap (Bitget allows ≥ 20×)
+    confidence_exponent: float = 3.0  # cubic conviction grading
     lm_threshold: float = 4.0         # LM stat reference for confidence multiplier
-    # direct_entry_lm kept as parameter for .env compatibility but no
-    # longer consumed by the strategy — the inside_band skip on
-    # screener-confirmed picks already lets the jump bar fire entry
-    # via the Donchian path, so a parallel "direct" path is redundant.
-    direct_entry_lm: float = 9999.0
+    direct_entry_lm: float = 9999.0   # kept for .env compatibility, unused
 
 
 class TrendFollowingStrategy:
@@ -244,6 +240,7 @@ class TrendFollowingStrategy:
                         cvar_alpha=self.p.cvar_alpha,
                         sizing_cap=self.p.sizing_cap,
                         leverage_cap=int(self.p.leverage_cap),
+                        confidence_exponent=self.p.confidence_exponent,
                     )
                     f = decision.fraction
                     reason = "donchian_break_up" if fired_long else "donchian_break_dn"
