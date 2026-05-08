@@ -120,14 +120,23 @@ class StrategyParams:
     cvar_floor: float = -0.10
     leverage_cap: float = 3.0
     risk_per_trade: float = 0.01      # per-trade risk budget (= 1% of equity)
-    sizing_cap: float = 2.0           # absolute fraction-of-equity ceiling
+    # Graded exposure cap. Confidence multiplier scales the base size in
+    # [0.25, 2.0] depending on (LM strength × multi-horizon agreement),
+    # so:
+    #   * weak signal:   base × 0.25 → tiny position
+    #   * strong signal: base × 2.0  → up to sizing_cap
+    # 1.5 lets the strongest signals reach 150% of equity (auto-leverage
+    # 2× on those rare bars), while base size with typical 6% Chandelier
+    # stop is 0.17 — well under 1, so no leverage is implicit. The
+    # leverage chooser always picks the smallest integer ≥ ⌈sized⌉ that
+    # also keeps liquidation > stop + buffer.
+    sizing_cap: float = 1.5
     lm_threshold: float = 4.0         # LM stat reference for confidence multiplier
-    # When |LM_t| ≥ direct_entry_lm, treat the jump itself as the
-    # breakout — no need to wait for a Donchian close-confirmation.
-    # This captures the move at its inception, which is the whole point
-    # of LM-jump-driven trend following. Set to a high value (e.g. 8) to
-    # require very extreme jumps for direct entry.
-    direct_entry_lm: float = 5.0
+    # direct_entry_lm kept as parameter for .env compatibility but no
+    # longer consumed by the strategy — the inside_band skip on
+    # screener-confirmed picks already lets the jump bar fire entry
+    # via the Donchian path, so a parallel "direct" path is redundant.
+    direct_entry_lm: float = 9999.0
 
 
 class TrendFollowingStrategy:
@@ -183,42 +192,42 @@ class TrendFollowingStrategy:
                 if want is None:
                     want = "long" if broke_up else ("short" if broke_dn else None)
 
-                # Compute LM at this bar so we can decide whether the
-                # jump itself qualifies as a breakout (direct entry).
-                pre = rets[: i]
-                lm_pre = lee_mykland_statistic(pre, window=24)
-                strong_jump = abs(lm_pre) >= self.p.direct_entry_lm
-
-                # The Yang-Zhang inside_band gate exists to filter
-                # *noise spikes* on otherwise-quiet symbols — when no
-                # screener context is given we don't know if a 1-bar
-                # outlier is a real signal or a fat-finger. But when
-                # `screener_side` is provided, the screener's LM /
-                # multi-horizon / Hurst / vol-regime / funding filters
-                # have ALREADY validated the move. Re-applying YZ band
-                # is then self-contradictory: the screener picked
-                # *because* the bar broke the normal range, so requiring
-                # the bar to be inside the normal range again is a
-                # logical conflict that empirically blocked every entry
-                # on screener-picked symbols. Skip it when the screener
-                # has spoken.
-                noise_filter_required = (screener_side is None
-                                          and not strong_jump)
-
+                # ---- AlphaPulse: anticipatory wave entry (Hawkes) ---- #
+                # Strategy thesis: the screener detects a jump because a
+                # cluster of further jumps is about to follow (Hawkes
+                # self-excitation, Aït-Sahalia et al. 2014; Lee 2012
+                # post-jump information diffusion). The jump bar IS the
+                # entry — we ride the cluster. Waiting for "consolidation"
+                # like a Turtle system would miss the cluster entirely
+                # and is the wrong strategy class for sudden-mover
+                # crypto perps.
+                #
+                # The Yang-Zhang `inside_band` gate filters noise on
+                # symbols WITHOUT a screener pick (HIST replay path).
+                # When ``screener_side`` is provided, the screener has
+                # already validated the jump via LM / multi-horizon /
+                # Hurst / vol-regime / funding filters — re-applying
+                # band would block the very jumps the screener flagged.
+                # So inside_band is a NOISE filter, not a SIZE filter:
+                # active for screener-less HIST replay only.
+                noise_filter_required = (screener_side is None)
                 fired_long = (
-                    want == "long"
-                    and (broke_up or (strong_jump and lm_pre > 0))
+                    want == "long" and broke_up
                     and (inside_band or not noise_filter_required)
                 )
                 fired_short = (
-                    want == "short"
-                    and (broke_dn or (strong_jump and lm_pre < 0))
+                    want == "short" and broke_dn
                     and (inside_band or not noise_filter_required)
                 )
                 if fired_long or fired_short:
                     side = "long" if fired_long else "short"
                     side_sign = 1 if fired_long else -1
-                    # Reuse lm_pre computed above; sign-align for sizing
+                    # Compute screener internals at the entry bar for
+                    # sizing-confidence multiplier. Sign-align so a
+                    # short entry on a downward LM contributes positive
+                    # confidence (we already filtered direction above).
+                    pre = rets[: i]
+                    lm_pre = lee_mykland_statistic(pre, window=24)
                     lm = lm_pre if (side_sign > 0) == (lm_pre > 0) \
                           else side_sign * abs(lm_pre)
                     agree = multi_horizon_alignment(pre, side_sign,
@@ -237,12 +246,7 @@ class TrendFollowingStrategy:
                         leverage_cap=int(self.p.leverage_cap),
                     )
                     f = decision.fraction
-                    if fired_long and not broke_up and strong_jump:
-                        reason = "lm_direct_long"
-                    elif fired_short and not broke_dn and strong_jump:
-                        reason = "lm_direct_short"
-                    else:
-                        reason = "donchian_break_up" if fired_long else "donchian_break_dn"
+                    reason = "donchian_break_up" if fired_long else "donchian_break_dn"
                     out.append(Signal(ts, df.attrs.get("symbol", ""), side,
                                       SignalType.ENTRY, source, close, f,
                                       reason,

@@ -356,8 +356,9 @@ class BacktestDialog(QDialog):
             f"<span style='color:{SUBTEXT}'>(Kelly·Grossman-Zhou 도출)</span><br>"
             f"&nbsp;&nbsp;Sizing cap = {sp.sizing_cap:.1f}× equity<br>"
             f"&nbsp;&nbsp;Max leverage = {sp.leverage_cap:.0f}×<br>"
-            f"&nbsp;&nbsp;LM threshold = {sp.lm_threshold:.1f}, "
-            f"direct entry ≥ {sp.direct_entry_lm:.1f}σ")
+            f"&nbsp;&nbsp;LM threshold = {sp.lm_threshold:.1f} "
+            f"<span style='color:{SUBTEXT}'>(점프 즉시 진입 비활성, "
+            f"Turtle 패턴 사용)</span>")
         strat_card.setWordWrap(True)
         strat_card.setTextFormat(Qt.RichText)
         strat_card.setStyleSheet(

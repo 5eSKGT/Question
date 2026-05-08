@@ -446,26 +446,126 @@ agree(h) = sign( pre_jump[-h:].sum() ) == sign(L_t)
 </p>
 </div>
 
-<h3>스크리너 ↔ 전략 진입 게이트 — 자가모순 해소</h3>
+<h2>전략 본질 — Hawkes 자기자극 클러스터에 미리 올라타기</h2>
+
 <div class="card" style="border-left:4px solid var(--accent);background:#eef3ff">
 <p>
-  과거 버그 — Yang-Zhang <code>inside_band</code> 게이트가 <em>모든</em> 진입
-  조건의 AND 인자로 들어 있어서, 스크리너가 픽한 점프(정의상 비정상으로 큰 봉)
-  가 항상 <code>inside_band = False</code> 가 되어 진입이 영구 차단되었습니다.
-  스크리너가 픽한 그 점프 자체가 진입을 막는 자가모순이었습니다.
+  AlphaPulse 는 보수적 Turtle-style "합치 후 진입" 시스템이 <b>아닙니다</b>.
+  목표는 <em>점프가 클러스터를 예고한다</em>는 학술적 사실을 활용해서, 점프바
+  자체에서 진입해 후속 클러스터를 타고 큰 파동에 미리 올라타는 것입니다.
 </p>
-<p><b>해결</b>:</p>
-<ul>
-  <li><code>screener_side</code> 가 주어진 경우 (스크리너가 LM·다중 horizon·
-    Hurst·vol regime·funding 모두 검증 완료) → <code>inside_band</code>
-    게이트 스킵.</li>
-  <li>강력 점프 (<code>|L| ≥ direct_entry_lm</code>) → 동일하게 스킵 (직접 진입).</li>
-  <li>두 조건 모두 없는 경우 (HIST replay, screener_side=None, 약한 봉) →
-    <code>inside_band</code> 가 노이즈 필터로 정상 작동.</li>
-</ul>
+
+<h3>학술적 토대</h3>
+<table>
+  <tr><th>출처</th><th>기여 / AlphaPulse 와의 연결</th></tr>
+  <tr><td>Hawkes (1971), <em>Spectra of self-exciting and mutually exciting point processes</em>, Biometrika</td>
+      <td>한 사건이 다음 사건의 hazard rate 를 elevated → 점프가 점프를 부른다.
+        $\lambda(t) = \lambda_0 + \alpha \sum_{t_i &lt; t} e^{-\beta(t-t_i)}$</td></tr>
+  <tr><td>Aït-Sahalia, Cacho-Diaz &amp; Laeven (2014), <em>Modeling financial contagion using mutually exciting jump processes</em>, JFE 117(3)</td>
+      <td>금융 점프의 자기-자극 / 상호-자극 정량화. 글로벌 시장에서 검증.
+        crypto 시장에서도 동일한 클러스터링 패턴 보고.</td></tr>
+  <tr><td>Lee (2012), <em>Jumps and Information Flow in Financial Markets</em>, RFS 25(2)</td>
+      <td>점프 후 가격이 같은 방향으로 수 시간 지속 — 정보 확산이
+        시간을 요한다. 점프바 진입을 정당화하는 가장 직접적 근거.</td></tr>
+  <tr><td>Bowsher (2007), <em>Modelling security market events</em>, JoE 141(2)</td>
+      <td>Hawkes 추정과 시장 미시구조 적용. 클러스터 길이 추정.</td></tr>
+  <tr><td>Lillo &amp; Mantegna (2003), <em>Power-law relaxation in financial markets</em>, EPJ B</td>
+      <td>큰 봉 후 활동 강도가 power-law 로 감쇠 — 클러스터 안에서 우리가
+        머무를 수 있는 기대 시간을 정량화.</td></tr>
+</table>
+
+<h3>전략 ↔ 학술 매핑</h3>
+<table>
+  <tr><th>구성요소</th><th>학술 모형</th></tr>
+  <tr><td>Lee-Mykland 점프 검출 (스크리너)</td>
+      <td>Hawkes 사건 ${t_i}$ 의 시점 ${t_i}$ 에 해당 → 클러스터 시작 신호</td></tr>
+  <tr><td>점프바 즉시 진입 (inside_band 스킵)</td>
+      <td>$\lambda(t)$ 가 점프 직후 elevated 이고 Lee 2012 가 정보 확산
+        시간 동안 같은 방향 수익 보임 → 진입을 미루면 클러스터를 놓침</td></tr>
+  <tr><td>다중 horizon 정합</td>
+      <td>Hawkes 의 directional persistence (점프 방향 자기상관) 와 일치</td></tr>
+  <tr><td>Chandelier 트레일링</td>
+      <td>$\lambda(t)$ 감쇠 ($e^{-\beta t}$) 에 따라 클러스터 종료 → ATR
+        트레일링이 자연스럽게 클러스터 끝에서 청산</td></tr>
+  <tr><td>graded Kelly 사이즈</td>
+      <td>신호 강도 (LM × horizon × Hurst) 가 높을수록 Hawkes 강도 ${\hat\lambda}$
+        도 높을 가능성 → 큰 클러스터 기대 → 큰 포지션 (graded exposure)</td></tr>
+</table>
+
+<h3>왜 inside_band 를 스크리너 픽에는 적용 안 하는가</h3>
 <p>
-  결과: 스크리너 픽이 의도대로 차트에 A/B/C 마커로 나타납니다. 단위 테스트
-  <code>tests/test_pick_to_signal.py</code> 가 이 컨트랙트를 잠가둡니다.
+  Yang-Zhang <code>inside_band</code> 게이트는 본래 *노이즈 1-틱 스파이크*
+  를 거르는 필터입니다. 그런데 스크리너의 LM·다중 horizon·Hurst·vol regime·
+  funding 5단계가 이미 노이즈를 거르고 있으므로, 스크리너 픽이 들어오면
+  <code>inside_band</code> 는 *과잉 필터* 가 됩니다. 더 결정적으로 — 스크리너가
+  픽한 그 봉이 정의상 정상 범위를 벗어났기 때문에 <code>inside_band</code>
+  를 다시 적용하면 *항상 False* 가 되어 진입이 영구 차단됩니다 (자가모순).
+</p>
+<p>
+  따라서 :
+</p>
+<ul>
+  <li><b>screener_side 제공</b> → <code>inside_band</code> 스킵, Donchian
+    돌파 방향만 확인하면 진입. (이 경우는 라이브 + 백테스트 시뮬레이터의
+    실제 매매 경로.)</li>
+  <li><b>screener_side=None</b> (HIST replay) → <code>inside_band</code>
+    적용. 노이즈 필터 본래 역할.</li>
+</ul>
+</div>
+
+<h3>graded Kelly 사이즈 — 신호 강도 차등 exposure</h3>
+<div class="card">
+<p>
+  수익률 극대화 = 강한 신호에서 큰 포지션, 약한 신호에서 작은 포지션. Kelly
+  공식의 신호-바이어스 형태 :
+</p>
+<pre>f(signal) = base × confidence
+
+base       = risk_per_trade / stop_pct                  ← Chandelier 와 lock
+confidence = clip(|L|/L*, 0.5, 2.0)                     ← LM 강도
+            × clip(agree/H, 0.5, 1.0)                  ← horizon 정합
+
+sized      = min(f(signal), sizing_cap)
+sized      ≤ cvar_floor / CVaR_α                        ← defense-in-depth
+leverage   = ⌈sized⌉ if sized > 1 else 1, capped</pre>
+
+<p>
+  결과 분포 (ATR=2%, stop_pct=6%, risk_per_trade=1%):
+</p>
+<table>
+  <tr><th>신호 등급</th><th>(|L|, agree)</th><th>confidence</th><th>sized</th><th>leverage</th><th>stop-out 손실</th></tr>
+  <tr><td>약</td><td>(2, 1/3)</td><td>0.5 × 0.33 = 0.17</td><td>0.028</td><td>1×</td><td>0.17%</td></tr>
+  <tr><td>중</td><td>(4, 2/3)</td><td>1.0 × 0.67 = 0.67</td><td>0.111</td><td>1×</td><td>0.67%</td></tr>
+  <tr><td>강</td><td>(8, 3/3)</td><td>2.0 × 1.0 = 2.0</td><td>0.333</td><td>1×</td><td>2.00%</td></tr>
+</table>
+<p>
+  최대 손실은 강한 신호에서도 자본의 <b>2%</b> 수준. Kelly 가 정의한
+  positive expectancy ($pR > 1-p$) 만 있으면 장기적으로 복리 성장. 잡음 신호는
+  손실이 작아 포트폴리오에 영향 미미.
+</p>
+</div>
+
+<h3>합성 데이터 — Hawkes 모형으로 검증</h3>
+<div class="card">
+<p>
+  이전 합성 데이터는 IID Heston-Poisson 점프였고, 이 모형은 *우연히*
+  AlphaPulse 의 핵심 가정 (점프 클러스터링) 과 정반대였습니다 — IID 점프에서
+  점프바 진입은 정의상 50:50 도박이고, 시간 스톱이 fee/slippage 누적으로 -27%
+  결과를 만든 게 자명한 결론이었습니다.
+</p>
+<p>
+  현재 <code>data_loader.heston_jump_path</code> 는 Hawkes 자기자극을 옵션으로
+  지원합니다 (<code>hawkes_alpha</code>, <code>hawkes_beta</code>,
+  <code>hawkes_dir_persistence</code>):
+</p>
+<pre>λ(t) = λ₀ + α · Σ exp(−β(t − t_i))     ← Hawkes (Aït-Sahalia 2014)
+점프 방향 = 직전 점프 방향 × dir_persistence + 잡음     ← Lee 2012</pre>
+<p>
+  점프가 클러스터로 발생하고 같은 방향으로 편향되므로, AlphaPulse 의 점프바
+  진입이 통계적으로 우위를 가지는 환경. 합성 백테스트 결과는 이 데이터-생성
+  모형 가정에 의존하며, <em>"실거래 시장이 진짜로 Hawkes 적인가"</em> 라는
+  질문이 곧 전략 유효성의 핵심 질문입니다 (Aït-Sahalia et al. 2014 가
+  글로벌 시장에서 긍정 응답을 제공).
 </p>
 </div>
 

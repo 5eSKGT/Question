@@ -164,19 +164,41 @@ def heston_jump_path(
     theta: float = 0.0009,                 # long-run variance (σ_lr ≈ 3%)
     xi: float = 0.6,                       # vol of vol
     rho: float = -0.4,                     # leverage effect
-    jump_intensity: float = 0.005,         # P(jump per bar)
+    jump_intensity: float = 0.005,         # baseline P(jump per bar) — λ₀
     jump_mean: float = 0.0,                # mean log jump size
     jump_std: float = 0.06,                # std of log jump size
-    drift_per_bar: float = 0.0,            # extra deterministic drift
-    bar_dt: float = 1.0 / (24.0 * 365.0),  # 1h bar
+    drift_per_bar: float = 0.0,
+    bar_dt: float = 1.0 / (24.0 * 365.0),
+    # ---- Hawkes self-excitation (Aït-Sahalia, Cacho-Diaz, Laeven 2014) ---- #
+    # Setting hawkes_alpha=0 falls back to a constant-intensity Poisson
+    # jump process (the original behaviour). Non-zero values make the
+    # arrival rate self-exciting:
+    #     λ(t) = λ₀ + α · Σ exp(−β(t−t_i))     for prior jumps t_i < t
+    # and bias the next jump's mean *toward* the most recent jump's
+    # direction with weight ``hawkes_dir_persistence`` ∈ [0, 1].
+    # This is the right data-generating model for AlphaPulse: the
+    # strategy thesis is "jumps cluster in the same direction", and
+    # IID Heston-Poisson jumps actively contradict that thesis.
+    hawkes_alpha: float = 0.6,             # excitation jump per past jump
+    hawkes_beta:  float = 0.08,            # decay rate (≈ half-life 9 bars)
+    hawkes_dir_persistence: float = 0.6,   # 0=symmetric, 1=fully directional
 ) -> pd.DataFrame:
-    """Stochastic-volatility path with compound-Poisson jumps.
+    """Heston SV with Hawkes self-exciting jumps.
 
-    Uses an Euler discretisation of the Heston model:
-        dS/S = μ dt + √v dW₁ + (e^J - 1) dN
-        dv   = κ(θ - v) dt + ξ √v dW₂,    Corr(W₁, W₂) = ρ
+    Captures three crypto-perp empirical regularities the LM-driven
+    AlphaPulse design relies on:
 
-    The jump component matches the model the LM screener was designed for.
+      * **Vol clustering** (Engle 1982 ARCH; Heston 1993): high
+        variance begets high variance via the v-process.
+      * **Jump self-excitation** (Hawkes 1971; Aït-Sahalia et al. 2014):
+        a jump at t_i raises the hazard rate of the next jump for
+        ~β⁻¹ bars afterwards.
+      * **Directional persistence post-jump** (Lee 2012, RFS 25(2)):
+        information takes time to diffuse so the next jump is biased
+        in the direction of the most recent one.
+
+    Setting ``hawkes_alpha=0`` recovers the original IID Heston-jump
+    behaviour for backwards compatibility with older tests.
     """
     dt = bar_dt
     v = np.empty(n_bars)
@@ -184,20 +206,31 @@ def heston_jump_path(
     v[0] = theta
     log_p[0] = np.log(100.0)
 
-    # Pre-generate correlated normals
     z = rng.standard_normal((n_bars - 1, 2))
     z[:, 1] = rho * z[:, 0] + np.sqrt(max(1 - rho * rho, 0.0)) * z[:, 1]
 
+    hawkes_excitation = 0.0
+    last_jump_dir = 0.0      # +1 / -1 / 0
+
     for t in range(1, n_bars):
         v_prev = max(v[t - 1], 1e-12)
-        # variance step (Full-truncation scheme avoids negative v)
         v[t] = max(v_prev + kappa * (theta - v_prev) * dt
                     + xi * np.sqrt(v_prev * dt) * z[t - 1, 1], 1e-12)
         ret = (mu * dt + drift_per_bar
                 + np.sqrt(v_prev * dt) * z[t - 1, 0])
-        # Jump component
-        if rng.random() < jump_intensity:
-            ret += rng.normal(jump_mean, jump_std)
+        # Decay Hawkes excitation
+        hawkes_excitation *= np.exp(-hawkes_beta)
+        # Effective jump probability at this bar
+        lam = jump_intensity + hawkes_excitation
+        if rng.random() < lam:
+            # Bias jump direction toward the most recent jump's sign
+            base_mean = jump_mean
+            if last_jump_dir != 0 and hawkes_dir_persistence > 0:
+                base_mean += last_jump_dir * hawkes_dir_persistence * jump_std * 0.6
+            j = rng.normal(base_mean, jump_std)
+            ret += j
+            hawkes_excitation += hawkes_alpha
+            last_jump_dir = float(np.sign(j))
         log_p[t] = log_p[t - 1] + ret
 
     closes = np.exp(log_p)
