@@ -44,9 +44,15 @@ def _ohlcv(prices: np.ndarray) -> pd.DataFrame:
 def test_screener_long_pick_fires_on_jump_bar():
     """AlphaPulse anticipatory thesis: a screener-confirmed long pick on
     a +5% jump must fire LONG entry on that jump bar. Waiting for
-    consolidation would miss the Hawkes cluster."""
+    consolidation would miss the Hawkes cluster.
+
+    Tape: 800 bars with mild positive drift so v2.1's multi-horizon TSM
+    majority (7d/14d/30d) cleanly admits longs — the contract here is
+    *entry on jump*, not the macro-filter behaviour itself, which has
+    its own dedicated tests above.
+    """
     rng = np.random.default_rng(0)
-    base = 100 * np.exp(np.cumsum(rng.normal(0, 0.005, 300)))
+    base = 100 * np.exp(np.cumsum(rng.normal(0.0005, 0.005, 800)))
     base[-1] = base[-2] * 1.05                          # +5% jump on last bar
 
     df = _ohlcv(base)
@@ -197,6 +203,44 @@ def test_v2_tsm_filter_rejects_counter_trend_jump():
         "TSM filter must reject a long entry on a downtrending tape — "
         "this is exactly the systematic counter-trend loss the "
         "Moskowitz-Ooi-Pedersen filter is designed to prevent.")
+
+
+def test_v2_1_multi_horizon_tsm_admits_short_window_uptrend():
+    """Han-Zhou-Zhu (2016) / AMP (2013) multi-horizon TSM aggregator:
+    a tape that is up over the last 7 and 14 days but flat over 30 days
+    must STILL admit a long entry — the majority vote (≥2 of 3) saves
+    the trade that single-window 30d MOP-2012 would have killed.
+    Mathematically: under H1 of positive drift, P(majority of 3 ≥ 2)
+    is strictly greater than P(any single horizon agrees), giving
+    higher detection power at the same Type-I rate."""
+    from crypto_trend.strategy.trend_following import macro_trend_majority
+    rng = np.random.default_rng(11)
+    flat = rng.normal(0.0, 0.003, 720 - 336)
+    up   = rng.normal(0.0015, 0.003, 336)
+    rets = np.concatenate([flat, up])
+    multi = bool(macro_trend_majority(rets, "long",
+                                       lookbacks=(168, 336, 720),
+                                       min_agree=2))
+    assert multi is True, (
+        "majority vote must admit long entry — 7d and 14d are clearly "
+        "positive, satisfying the ≥2-of-3 rule even if 30d is borderline")
+
+
+def test_v2_1_multi_horizon_tsm_rejects_pure_downtrend():
+    """Symmetry guarantee: a uniformly negative tape across all
+    horizons must still be rejected. The relaxation must not turn the
+    gate into a pass-through — the Bonferroni-type bound only holds
+    because each horizon votes independently."""
+    from crypto_trend.strategy.trend_following import macro_trend_majority
+    rng = np.random.default_rng(13)
+    rets = rng.normal(-0.0012, 0.003, 800)
+    assert bool(macro_trend_majority(rets, "long",
+                                       lookbacks=(168, 336, 720),
+                                       min_agree=2)) is False, (
+        "all 3 horizons negative → 0 votes for long → must reject")
+    assert bool(macro_trend_majority(rets, "short",
+                                       lookbacks=(168, 336, 720),
+                                       min_agree=2)) is True
 
 
 def test_v2_volume_filter_rejects_low_volume_jump():

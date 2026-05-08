@@ -243,13 +243,23 @@ class StrategySimulator:
                 # strategy/trend_following.py for the rationale; this
                 # block is the simulator-side mirror so backtest = live.
                 from ..strategy.trend_following import (
-                    macro_trend_aligned, volume_z_at)
-                tsm_long_ok = (p.tsm_lookback_bars <= 0
-                                or macro_trend_aligned(pc.log_rets[: t], "long",
-                                                         p.tsm_lookback_bars))
-                tsm_short_ok = (p.tsm_lookback_bars <= 0
-                                 or macro_trend_aligned(pc.log_rets[: t], "short",
-                                                          p.tsm_lookback_bars))
+                    macro_trend_aligned, macro_trend_majority, volume_z_at)
+                if p.tsm_majority_lookbacks:
+                    tsm_long_ok = macro_trend_majority(
+                        pc.log_rets[: t], "long",
+                        lookbacks=p.tsm_majority_lookbacks,
+                        min_agree=p.tsm_majority_min_agree)
+                    tsm_short_ok = macro_trend_majority(
+                        pc.log_rets[: t], "short",
+                        lookbacks=p.tsm_majority_lookbacks,
+                        min_agree=p.tsm_majority_min_agree)
+                else:
+                    tsm_long_ok = (p.tsm_lookback_bars <= 0
+                                    or macro_trend_aligned(pc.log_rets[: t], "long",
+                                                             p.tsm_lookback_bars))
+                    tsm_short_ok = (p.tsm_lookback_bars <= 0
+                                     or macro_trend_aligned(pc.log_rets[: t], "short",
+                                                              p.tsm_lookback_bars))
                 vol_arr = candles_aligned[sym]["volume"].to_numpy(dtype=float)
                 vol_ok = (p.volume_z_threshold <= -10
                             or volume_z_at(vol_arr, t,
