@@ -59,13 +59,16 @@ def _seed_universe(seed: int, args, real_pool: dict | None) -> dict:
     """Build a per-seed universe.
 
     Synthetic mode draws a fresh Heston-jump universe per seed.
-    Real mode bootstraps a 70%-symbol subset of the cached parquet data
-    with a deterministic per-seed RNG, giving genuine cross-validation
-    variability without contaminating the universe across seeds.
+    Real mode runs seed 0 against the FULL live-mirroring universe
+    (canonical result), and seeds > 0 bootstrap a 70% symbol subset
+    so the variability across additional seeds reflects genuine
+    cross-validation rather than synthetic randomness.
     """
     if real_pool is None:
         return synthetic_universe(args.n_symbols, args.bars, seed=seed,
                                     regime="bull_jump")
+    if seed == 0:
+        return dict(real_pool)
     rng = np.random.default_rng(seed)
     symbols = list(real_pool.keys())
     k = max(5, int(round(len(symbols) * 0.7)))
