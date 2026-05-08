@@ -35,7 +35,10 @@ hiddenimports = (
 )
 
 a = Analysis(
-    ["../crypto_trend/desktop/app.py"],
+    # Top-level launcher with absolute imports — see launcher.py for why
+    # using crypto_trend/desktop/app.py directly causes
+    # "attempted relative import with no known parent package".
+    [str(ROOT / "launcher.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=datas,
