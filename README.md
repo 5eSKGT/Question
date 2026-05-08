@@ -11,25 +11,78 @@ VWAP / TITAN TRADING 스택과 **완전히 분리된** 별도 자동매매 시�
 
 ---
 
-## 데스크톱 실행 파일
+## 실행하는 세 가지 방법 — 가장 빠른 것부터
 
-```bash
-pip install -r requirements.txt
-python build/build_exe.py            # → dist/AlphaPulse.exe (Win) / dist/AlphaPulse (mac/linux)
+| 방법 | 첫 설정 | 매번 업데이트 | 시작 속도 | 언제 쓰는가 |
+| --- | --- | --- | --- | --- |
+| **A. 바탕화면 바로가기 + `git pull`** ⭐ | 30초 | **`git pull` 5초** | 즉시 | **개인 사용 / 일상 개발** |
+| B. PyInstaller `--onedir` (폴더형 .exe) | 10–15분 | 1–2분 (캐시) | 즉시 | 다른 PC에 배포할 때 |
+| C. PyInstaller `--onefile` (단일 .exe) | 10–15분 | **매번 10–15분** | 5–10초 압축해제 | 한 파일로 보내야 할 때만 |
+
+### A. 바탕화면 바로가기 (가장 권장)
+
+```powershell
+cd C:\Users\82102\AlphaPulse
+pip install -r requirements.txt                        # 한 번만
+powershell -ExecutionPolicy Bypass -File tools\install_shortcut.ps1
 ```
 
-빌드 결과는 단일 실행 파일이며, **CLI 의존 없이 GUI 안에서 모든 동작이
-가능**합니다 — 모드 전환, API 키 입력, 전략 파라미터 조정, 엔진 시작/정지,
-매매 중단/재개, 심볼 선택, 차트 보기, 거래 메시지 확인 모두 한 창에서.
+바탕화면에 **AlphaPulse** 아이콘이 생깁니다. 더블클릭 → GUI 즉시 실행
+(콘솔 창 안 뜸, AlphaPulse 아이콘 사용).
+
+업데이트는:
+```powershell
+cd C:\Users\82102\AlphaPulse
+git pull
+```
+끝. 5초. 더블클릭 다시 누르면 새 코드로 실행됩니다.
+
+### B. 폴더형 빌드 (배포용, 빠른 증분)
+
+```powershell
+python build\build_exe.py             # 기본값 = onedir
+```
+
+`dist\AlphaPulse\AlphaPulse.exe` 가 생기고, 이 폴더를 통째로 다른 PC에
+복사하면 Python 없이 실행됩니다. 두 번째 빌드부터는 PyInstaller 캐시
+덕분에 1–2분만에 끝납니다.
+
+### C. 단일 파일 빌드 (한 파일로 전달해야 할 때만)
+
+```powershell
+python build\build_exe.py --onefile   # 10-15분, 매번 풀 리빌드
+```
+용량이 큰 라이브러리(PySide6 QtWebEngine, scipy, numpy …) 를 매번 다시
+압축하므로 시간이 오래 걸립니다. 이메일·USB 한 파일 전달용으로만 권장.
+
+---
+
+## 실행 스크립트 (수동)
+
+| 파일 | 동작 |
+| --- | --- |
+| `run_alphapulse.bat` | `pythonw -m crypto_trend` (콘솔 숨김) — 바로가기가 가리키는 파일 |
+| `run_alphapulse_debug.bat` | `python -m crypto_trend` (콘솔 표시) — 트러블슈팅용 |
+| `run_alphapulse.ps1` | PowerShell 버전. `-Update` 시 git pull, `-Install` 시 pip install |
+
+```powershell
+.\run_alphapulse.ps1 -Update           # 받고 실행
+.\run_alphapulse.ps1 -Update -Install  # 받고 deps 설치 후 실행
+.\run_alphapulse.ps1 -Debug            # 콘솔 보면서 실행
+```
+
+---
+
+## GUI 동작 — 한 창에서 전부
+
+CLI 의존 없이 GUI 안에서 모든 동작이 가능합니다 — 모드 전환, API 키 입력,
+전략 파라미터 조정, 엔진 시작/정지, 매매 중단/재개, 심볼 선택, 차트 보기,
+거래 메시지 확인 모두 한 창에서. 헤더의 ⓘ 버튼으로 상세 설명/SVG 다이어그램
+문서를 호출할 수 있습니다.
 
 * 창 제목 : `AlphaPulse · Crypto Trend Following — Bitget`
 * 아이콘  : `crypto_trend/desktop/assets/icon.ico` (인디고 + 캔들스틱 + 골든 라이트닝)
-* 배경    : `crypto_trend/desktop/assets/background.png` (라이트 그라디언트 + 펄스 웨이브 오버레이)
-
-런타임만 직접 띄우려면:
-```bash
-python -m crypto_trend                # PySide6 데스크톱 GUI
-```
+* 배경    : `crypto_trend/desktop/assets/background.png` (라이트 그라디언트 + 펄스 웨이브)
 
 ---
 
