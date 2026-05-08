@@ -1,18 +1,25 @@
-"""Walk-forward orchestrator.
+"""Walk-forward orchestrator that mirrors the live OOS adaptor.
 
-Splits the global candle history into rolling (train, test) windows. The
-*train* window is currently used only as warmup for the indicators (we
-do not retune parameters between windows in this backtest — the
-production engine handles that via the live OOS adaptor). Each test
-window is simulated independently and metrics are aggregated.
+Splits the global candle history into rolling (train, test) windows. At
+each window boundary the same ``AdaptiveOOS`` machinery the live engine
+uses is invoked: if the test-window result fails the PSR/Sharpe gate
+the strategy parameters are recalibrated for the next window; if the
+adaptor cannot find passing parameters, the backtest halts at that
+window — exactly what would have happened in production.
+
+The recalibration history is recorded so the user can see when (and
+why) the adaptor would have intervened during real operation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
 
+from ..oos.adaptive import (AdaptiveOOS, AdaptiveStatus, MIN_SAMPLES,
+                              RecalibrationFailed)
+from ..strategy.trend_following import StrategyParams
 from .metrics import BacktestMetrics, compute_metrics
 from .simulator import StrategySimulator, Trade
 
@@ -24,6 +31,8 @@ class WalkForwardResult:
     trades: list[Trade] = field(default_factory=list)
     bar_returns: np.ndarray = field(default_factory=lambda: np.array([]))
     telemetry: dict = field(default_factory=dict)
+    oos_history: list[dict] = field(default_factory=list)   # per-window OOS verdicts
+    halted_at_window: int | None = None
 
 
 def walk_forward_run(
@@ -49,7 +58,11 @@ def walk_forward_run(
         "picks_zero_cycles": 0,
     }
 
+    oos_history: list[dict] = []
+    halted_at: int | None = None
+
     start = train_bars
+    window_idx = 0
     while start + test_bars <= n:
         end = start + test_bars
         slice_idx = common_idx[: end]
@@ -75,11 +88,57 @@ def walk_forward_run(
             telemetry_acc["rescreen_count"] += t_win.get("rescreen_count", 0)
             telemetry_acc["picks_total"] += t_win.get("picks_total", 0)
             telemetry_acc["picks_zero_cycles"] += t_win.get("picks_zero_cycles", 0)
+
+        # ---- OOS adaptive recalibration (mirrors live engine) ----------- #
+        # The same machinery the production loop uses every cycle.  We
+        # build a one-shot backtest function that returns this window's
+        # bar returns under a candidate parameter set; the adaptor calls
+        # it for the current params and (on failure) for a small grid.
+        if rets.size >= MIN_SAMPLES:
+            captured_sim = sim                                   # closure capture
+            sliced_now = sliced
+
+            def _recalibrate(p: StrategyParams) -> np.ndarray:
+                trial = StrategySimulator(
+                    strategy=type(captured_sim.strategy)(p),
+                    screener=captured_sim.screener,
+                    taker_fee=captured_sim.taker_fee,
+                    slippage_bps=captured_sim.slippage_bps,
+                    rescreen_every=captured_sim.rescreen_every,
+                )
+                trial_out = trial.run(sliced_now, warmup_bars=start)
+                return trial_out["bar_returns"]
+
+            adaptor = AdaptiveOOS(_recalibrate)
+            try:
+                report = adaptor.step(captured_sim.strategy.p)
+                oos_history.append({
+                    "window": window_idx,
+                    "status": report.status.value,
+                    "psr": round(report.psr, 3),
+                    "sharpe": round(report.sharpe, 3),
+                    "attempts": report.attempts,
+                })
+                if report.status == AdaptiveStatus.RECALIBRATED:
+                    captured_sim.strategy.p = report.params
+            except RecalibrationFailed as e:
+                oos_history.append({
+                    "window": window_idx,
+                    "status": "halted",
+                    "message": str(e),
+                })
+                halted_at = window_idx
+                break
+
         start += step
+        window_idx += 1
 
     telemetry_acc["picks_mean"] = (
         telemetry_acc["picks_total"] / telemetry_acc["rescreen_count"]
         if telemetry_acc["rescreen_count"] else 0.0)
+    telemetry_acc["oos_recalibrations"] = sum(
+        1 for h in oos_history if h.get("status") == "recalibrated")
+    telemetry_acc["oos_halted_at_window"] = halted_at
 
     flat_rets = (np.concatenate(bar_returns_all)
                   if bar_returns_all else np.array([]))
@@ -97,4 +156,6 @@ def walk_forward_run(
         trades=trades_all,
         bar_returns=flat_rets,
         telemetry=telemetry_acc,
+        oos_history=oos_history,
+        halted_at_window=halted_at,
     )

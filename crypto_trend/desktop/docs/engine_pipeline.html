@@ -980,6 +980,60 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
 </p>
 </div>
 
+<h2>실제 매매 전략과 비교 베이스라인</h2>
+
+<div class="card" style="border-left:4px solid var(--accent);background:#eef3ff">
+<p style="margin-top:0">
+  자주 헷갈리는 부분 — 백테스트 결과 테이블에 세 항목이 나오지만 <b>실제로
+  매매하는 것은 AlphaPulse 하나뿐</b>입니다. 나머지 둘은 비교 기준이며 라이브
+  엔진은 그것들을 트레이딩하지 않습니다.
+</p>
+<table>
+  <tr><th>항목</th><th>역할</th><th>라이브에서 매매하나?</th></tr>
+  <tr><td><b>AlphaPulse</b></td>
+      <td>본 시스템의 유일한 매매 전략. 점프 검출 → 다중 horizon 정합 → CVaR-Kelly-VolTarget 사이징 → Donchian 진입 → Chandelier 청산.</td>
+      <td>✅ <b>예</b> — paper / live 모두 이것만 실행</td></tr>
+  <tr><td>Buy-and-Hold (baseline)</td>
+      <td>유니버스 동등가중 매수 후 홀딩. 시장 평균 베타 측정용.</td>
+      <td>❌ 아니오 — 비교 기준</td></tr>
+  <tr><td>Naive Momentum (baseline)</td>
+      <td>매 24봉마다 직전 24봉 누적 수익률 상위 25% 매수, 동등가중. 손절·청산·CVaR 모두 없음. Jegadeesh &amp; Titman (1993, JF 48(1)) 의 cross-sectional momentum 을 시간 단위로 축소.</td>
+      <td>❌ 아니오 — 비교 기준</td></tr>
+</table>
+<p>
+  AlphaPulse 가 두 베이스라인 대비 위험조정 우위 (Sortino, MDD) 를 가지지 못하면
+  복잡한 모형의 가치가 없는 것으로 간주합니다 — 그래서 <em>비교가 필수</em>지만
+  베이스라인은 매매 후보가 아닙니다. 헷갈리지 않도록 GUI 테이블에 라벨이
+  "AlphaPulse ▸ 실제 매매 전략" / "Buy-and-Hold (baseline)" / "Naive Momentum (baseline)"
+  로 명확히 표기됩니다.
+</p>
+</div>
+
+<h3>Naive Momentum 의 정확한 정의</h3>
+
+<div class="card">
+<pre>알고리즘 :
+  매 24봉 (= 매일) :
+    1) 모든 후보 심볼의 직전 24봉 누적 로그수익률 r_i = log(P_i,t / P_i,t-24) 계산
+    2) r_i 내림차순 정렬
+    3) 상위 25% 만 동등가중 매수
+    4) 다음 리밸런싱 시점까지 그대로 보유 (재선택 없음)
+  손절·익절·CVaR·헷지·funding 필터 모두 없음. 항상 100% 노출.
+
+학술적 근거 :
+  Jegadeesh &amp; Titman (1993) "Returns to buying winners and selling losers"
+  J. Finance 48(1) 의 cross-sectional momentum portfolio 를 시간 단위로 축소
+  한 형태. "정교한 모형 없이 단순 모멘텀만으로 얼마나 잡을 수 있는가" 의 *최소
+  구현* 비교 기준입니다.
+
+용도 :
+  AlphaPulse 의 추가 정교성 (LM 점프 검출, 다중 horizon, CVaR 사이징, OOS
+  자가보정) 이 단순 모멘텀 대비 의미 있는 알파를 만드는지를 *검증* 하기 위한
+  null hypothesis. Naive 가 AlphaPulse 와 비등하다면 본 모형의 모든 추가
+  복잡성이 정당화되지 않습니다.
+</pre>
+</div>
+
 <h2>3-자 파이프라인 정렬 — 라이브 / 백테스트 / 차트</h2>
 
 <div class="card">
@@ -1027,7 +1081,7 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
       <td>—</td></tr>
   <tr><td>OOS 게이트</td>
       <td>AdaptiveOOS.step() + warmup 5 사이클</td>
-      <td>walk-forward 윈도우별 평가</td>
+      <td><b>동일</b> — 윈도우 끝마다 AdaptiveOOS 호출, 재보정 / HALT 시뮬레이션</td>
       <td>OOS 카드 상태 표시</td></tr>
   <tr><td>피드백</td>
       <td>progress_callback → GUI 상태바 실시간</td>

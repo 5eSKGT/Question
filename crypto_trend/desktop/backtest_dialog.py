@@ -97,6 +97,12 @@ class BacktestWorker(QThread):
                     candles = synthetic_universe(self.p["n_symbols"],
                                                   self.p["bars"], seed=seed)
                 else:
+                    if i > 0:
+                        # bitget data is the same across seeds — no need to
+                        # re-download or re-evaluate. The 0-th seed already
+                        # produced the result.
+                        self.log.emit("  bitget mode runs once — extra seeds skipped")
+                        break
                     top = self.p["top"] or None     # 0 → None → full universe
                     self.log.emit(f"  pulling Bitget USDT-perps "
                                     f"({'top-' + str(top) if top else 'full universe'}) …")
@@ -112,9 +118,17 @@ class BacktestWorker(QThread):
                                 self.log.emit(f"  downloaded {j+1}/{len(universe)}")
                         except Exception as e:                         # noqa: BLE001
                             self.log.emit(f"  skip {s}: {e}")
-                    if len(seeds) > 1:
-                        self.log.emit("  bitget mode runs once — ignoring extra seeds")
-                        seeds = [seed]
+                    # ---- drop symbols whose history is too short ---- #
+                    min_history = max(int(self.p["bars"] * 0.7), train_bars + test_bars)
+                    short = [s for s, df in candles.items()
+                              if len(df) < min_history]
+                    for s in short:
+                        candles.pop(s)
+                    if short:
+                        self.log.emit(
+                            f"  dropped {len(short)} symbols with < {min_history} "
+                            f"bars of history (newer listings)")
+                    self.log.emit(f"  {len(candles)} symbols enter walk-forward")
 
                 if not candles:
                     self.log.emit("  ⚠ no candles loaded — skipping seed")
@@ -172,6 +186,17 @@ class BacktestWorker(QThread):
                         f"rescreen cycles={tele['rescreen_count']}, "
                         f"avg picks/cycle={tele['picks_mean']:.2f}, "
                         f"empty cycles={tele['picks_zero_cycles']}")
+                # OOS adaptive — exact mirror of live engine's behaviour
+                oos_hist = getattr(wf, "oos_history", []) or []
+                if oos_hist:
+                    recals = sum(1 for h in oos_hist
+                                   if h.get("status") == "recalibrated")
+                    halted = wf.halted_at_window
+                    self.log.emit(
+                        f"  ▸ OOS adaptive: {len(oos_hist)} windows evaluated, "
+                        f"{recals} recalibration(s)"
+                        + (f", halted at window {halted}" if halted is not None
+                            else ""))
 
             # ---- aggregate ------------------------------------------ #
             cols = ["return", "sharpe", "sortino", "mdd", "calmar",
@@ -284,16 +309,23 @@ class BacktestDialog(QDialog):
 
         # Environment summary — read from live config, NOT editable.
         from ..config import SETTINGS
+        wf_min_bars = (SETTINGS.walk_forward_train_days * 24
+                        + 8 * SETTINGS.walk_forward_test_days * 24)
+        bars_default = max(2000, wf_min_bars)
         env_card = QLabel(
             f"<b>실거래 환경 미러링</b><br>"
-            f"• 유니버스: 전체 USDT-Perp · 거래대금 ≥ ${SETTINGS.base_equity_usdt and 5}M<br>"
-            f"• 봉 수 / 타임프레임: 500 × 1h<br>"
+            f"• 유니버스: 전체 USDT-Perp · 거래대금 ≥ $5M (live 동일)<br>"
+            f"• 타임프레임: 1h · 다운로드 봉 수: {bars_default}<br>"
+            f"&nbsp;&nbsp;&nbsp;<span style='color:{SUBTEXT}'>"
+            f"라이브의 <code>history_bars=500</code>은 *사이클당 분석 윈도우*이지 "
+            f"백테스트 길이가 아니므로, walk-forward train/test 를 충분히 돌리도록 "
+            f"별도 산정합니다.</span><br>"
             f"• Walk-forward: train {SETTINGS.walk_forward_train_days}d / "
-            f"test {SETTINGS.walk_forward_test_days}d<br>"
-            f"• 모드: paper · live 모두 동일 코드 경로<br>"
-            f"<span style='color:{SUBTEXT}'>이 항목들은 라이브 엔진과 동일하게 "
-            f"고정되어 사용자가 변경할 수 없습니다 — 그래야 백테스트 결과가 실제 "
-            f"운용을 의미 있게 예측합니다.</span>")
+            f"test {SETTINGS.walk_forward_test_days}d (live SETTINGS 동일)<br>"
+            f"• 스크리너 / 전략 / OOS 자가보정: live 와 동일 코드 경로<br>"
+            f"• 베이스라인 비교: Buy-and-Hold, Naive Momentum (실제 매매에서는 사용 안 함)<br>"
+            f"<span style='color:{SUBTEXT}'>이 항목들은 사용자가 변경할 수 없습니다 — "
+            f"그래야 백테스트 결과가 실제 운용을 의미 있게 예측합니다.</span>")
         env_card.setWordWrap(True)
         env_card.setTextFormat(Qt.RichText)
         env_card.setStyleSheet(
@@ -325,9 +357,18 @@ class BacktestDialog(QDialog):
         # Hidden/derived knobs — kept as members for the worker to read.
         # setRange must precede setValue, otherwise QSpinBox's default
         # range (0, 99) clamps the desired value silently.
+        #
+        # NOTE on bars: the live engine's `history_bars=500` is the
+        # *per-cycle indicator window*, NOT the total length of a
+        # backtest. A walk-forward needs at least
+        #   train_bars + N × test_bars ≈ 720 + N × 168
+        # bars of history. We default to 2000 so 8 windows fit
+        # (≈ 60 days of out-of-sample testing).
+        wf_min_bars = (SETTINGS.walk_forward_train_days * 24
+                        + 8 * SETTINGS.walk_forward_test_days * 24)
         self.bars_spin = QSpinBox()
         self.bars_spin.setRange(100, 20000)
-        self.bars_spin.setValue(500)                              # = engine.history_bars default
+        self.bars_spin.setValue(max(2000, wf_min_bars))
         self.bars_spin.hide()
 
         self.top_spin = QSpinBox()
@@ -572,9 +613,14 @@ class BacktestDialog(QDialog):
         self._fill_verdict(payload)
 
     def _fill_summary(self, summary: dict) -> None:
-        rows = [("AlphaPulse", summary.get("alphapulse")),
-                 ("Buy-and-Hold", summary.get("buyhold")),
-                 ("Naive Momentum", summary.get("naive_momentum"))]
+        # AlphaPulse is the only strategy actually executed by the live
+        # engine. The other two are *baselines* — non-tradeable reference
+        # points to validate the strategy's edge.
+        rows = [
+            ("AlphaPulse  ▸ 실제 매매 전략", summary.get("alphapulse")),
+            ("Buy-and-Hold  (baseline)",     summary.get("buyhold")),
+            ("Naive Momentum  (baseline)",   summary.get("naive_momentum")),
+        ]
         self.table.setRowCount(len(rows))
         for i, (name, s) in enumerate(rows):
             if s is None:
