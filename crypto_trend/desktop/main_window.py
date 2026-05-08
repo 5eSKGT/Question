@@ -20,6 +20,7 @@ from .. import config
 from ..config import DOCS_DIR, SETTINGS, TradingMode
 from ..portfolio.state import PortfolioState
 from ..strategy.trend_following import StrategyParams
+from .backtest_dialog import BacktestDialog
 from .chart_view import SignalChartView
 from .credentials import CredentialStore
 from .credentials_dialog import CredentialsDialog
@@ -257,7 +258,17 @@ class AlphaPulseWindow(QMainWindow):
         v.addWidget(self.btn_start)
         v.addWidget(self.btn_stop)
 
+        self.btn_backtest = QPushButton("📊 백테스트 실행")
+        self.btn_backtest.setObjectName("ghost")
+        self.btn_backtest.clicked.connect(self._on_open_backtest)
+        v.addWidget(self.btn_backtest)
+
         return card
+
+    # ------------------------------------------------------------------ #
+    def _on_open_backtest(self) -> None:
+        dlg = BacktestDialog(self, current_strategy_params=None)
+        dlg.exec()
 
     def _caption(self, txt: str) -> QLabel:
         l = QLabel(txt); l.setObjectName("caption"); return l

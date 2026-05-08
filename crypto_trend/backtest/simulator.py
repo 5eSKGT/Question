@@ -196,12 +196,18 @@ class StrategySimulator:
                 if not (fire_long or fire_short):
                     continue
 
-                # CVaR-bounded sizing on the most recent 256 returns
-                from ..risk.cvar import max_size_under_cvar
+                # Optimal sizing: Kelly + Vol-target + CVaR + leverage cap
+                from ..risk.sizing import optimal_position
                 sample = pc.log_rets[max(0, t - 256): t]
-                size = max_size_under_cvar(sample, p.cvar_floor,
-                                             p.cvar_alpha,
-                                             leverage_cap=p.leverage_cap)
+                decision = optimal_position(
+                    sample, cvar_floor=p.cvar_floor,
+                    cvar_alpha=p.cvar_alpha,
+                    target_vol=p.target_annual_vol,
+                    kelly_safety=p.kelly_safety,
+                    fraction_cap=p.sizing_cap,
+                    leverage_cap=int(p.leverage_cap),
+                )
+                size = decision.fraction
                 if size <= 0:
                     continue
 

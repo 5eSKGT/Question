@@ -166,7 +166,8 @@ class TradingEngine:
                 return
             order = Order(symbol=sig.symbol,
                           side="buy" if sig.side == "long" else "sell",
-                          qty=qty, price=None)
+                          qty=qty, price=None,
+                          leverage=int(sig.meta.get("leverage") or 0) or None)
             try:
                 fill = self.broker.submit(order)
                 self._open_positions[sig.symbol] = sig.side

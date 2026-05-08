@@ -40,6 +40,7 @@ class Order:
     price: float | None  # None for market
     type: str = "market"
     reduce_only: bool = False
+    leverage: int | None = None    # passed through to broker.set_leverage
     client_id: str = field(default_factory=lambda: f"ct-{uuid.uuid4().hex[:10]}")
 
 
@@ -120,8 +121,20 @@ class BitgetClient:
             ))
         return out
 
+    # ---- leverage ----------------------------------------------------- #
+    def set_leverage(self, symbol: str, leverage: int) -> None:
+        """Best-effort leverage update on Bitget. Silently ignores failures
+        because some symbols default to a non-changeable leverage and
+        because this function is called speculatively per entry."""
+        try:
+            self._ex.set_leverage(int(leverage), symbol)
+        except Exception as e:                                  # noqa: BLE001
+            log.debug(f"set_leverage {symbol}={leverage}: {e}")
+
     # ---- order routing ------------------------------------------------- #
     def submit(self, order: Order) -> Fill:
+        if getattr(order, "leverage", None):
+            self.set_leverage(order.symbol, int(order.leverage))
         params: dict[str, Any] = {"reduceOnly": order.reduce_only}
         resp = self._ex.create_order(
             symbol=order.symbol,
@@ -197,8 +210,15 @@ class PaperBroker:
     def fetch_positions(self) -> list[Position]:
         return [p for p in self.positions.values() if p.qty != 0.0]
 
+    # ---- leverage (paper mode is a no-op but tracks the request) ------ #
+    def set_leverage(self, symbol: str, leverage: int) -> None:
+        self._leverage_by_sym = getattr(self, "_leverage_by_sym", {})
+        self._leverage_by_sym[symbol] = int(leverage)
+
     # ---- order routing ------------------------------------------------- #
     def submit(self, order: Order) -> Fill:
+        if order.leverage:
+            self.set_leverage(order.symbol, order.leverage)
         price = order.price or self._last_price.get(order.symbol)
         if price is None or price <= 0:
             log.warning(f"PaperBroker: no last price for {order.symbol}; rejecting")

@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 
 from ..risk.cvar import max_size_under_cvar
+from ..risk.sizing import optimal_position
 
 
 class SignalType(str, Enum):
@@ -100,6 +101,10 @@ class StrategyParams:
     cvar_alpha: float = 0.05
     cvar_floor: float = -0.08
     leverage_cap: float = 3.0
+    # Optimal-sizing knobs — see crypto_trend.risk.sizing.optimal_position
+    target_annual_vol: float = 0.20         # vol-targeting annualised goal
+    kelly_safety: float = 0.5               # half-Kelly multiplier
+    sizing_cap: float = 1.0                 # absolute fraction-of-equity ceiling
 
 
 class TrendFollowingStrategy:
@@ -157,22 +162,46 @@ class TrendFollowingStrategy:
 
                 if want == "long" and broke_up and inside_band:
                     sample = rets[max(0, i - 256): i]
-                    f = max_size_under_cvar(sample, self.p.cvar_floor,
-                                             self.p.cvar_alpha, leverage_cap=self.p.leverage_cap)
+                    decision = optimal_position(
+                        sample, cvar_floor=self.p.cvar_floor,
+                        cvar_alpha=self.p.cvar_alpha,
+                        target_vol=self.p.target_annual_vol,
+                        kelly_safety=self.p.kelly_safety,
+                        fraction_cap=self.p.sizing_cap,
+                        leverage_cap=int(self.p.leverage_cap),
+                    )
+                    f = decision.fraction
                     out.append(Signal(ts, df.attrs.get("symbol", ""), "long",
                                       SignalType.ENTRY, source, close, f,
                                       "donchian_break_up",
-                                      {"atr": atr_i, "yz": yz_i}))
+                                      {"atr": atr_i, "yz": yz_i,
+                                       "leverage": decision.leverage,
+                                       "binding": decision.binding,
+                                       "f_kelly": decision.f_kelly,
+                                       "f_vol_target": decision.f_vol_target,
+                                       "f_cvar": decision.f_cvar}))
                     position_side, entry_price, entry_idx = "long", close, i
                     peak = close
                 elif want == "short" and broke_dn and inside_band:
                     sample = rets[max(0, i - 256): i]
-                    f = max_size_under_cvar(sample, self.p.cvar_floor,
-                                             self.p.cvar_alpha, leverage_cap=self.p.leverage_cap)
+                    decision = optimal_position(
+                        sample, cvar_floor=self.p.cvar_floor,
+                        cvar_alpha=self.p.cvar_alpha,
+                        target_vol=self.p.target_annual_vol,
+                        kelly_safety=self.p.kelly_safety,
+                        fraction_cap=self.p.sizing_cap,
+                        leverage_cap=int(self.p.leverage_cap),
+                    )
+                    f = decision.fraction
                     out.append(Signal(ts, df.attrs.get("symbol", ""), "short",
                                       SignalType.ENTRY, source, close, f,
                                       "donchian_break_dn",
-                                      {"atr": atr_i, "yz": yz_i}))
+                                      {"atr": atr_i, "yz": yz_i,
+                                       "leverage": decision.leverage,
+                                       "binding": decision.binding,
+                                       "f_kelly": decision.f_kelly,
+                                       "f_vol_target": decision.f_vol_target,
+                                       "f_cvar": decision.f_cvar}))
                     position_side, entry_price, entry_idx = "short", close, i
                     trough = close
             else:

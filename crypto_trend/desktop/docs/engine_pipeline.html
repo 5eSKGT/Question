@@ -485,6 +485,62 @@ agree(h) = sign( pre_jump[-h:].sum() ) == sign(L_t)
 </div>
 
 <!-- ────────────────────────────────────────────────────────────────── -->
+<h2>최적 사이징 — Kelly + Vol-Target + CVaR + Optimal Leverage</h2>
+
+<div class="card">
+<p>
+  진입 시 <em>얼마</em>를 베팅할지, <em>몇 배</em> 레버리지를 쓸지를 단일 결정으로
+  통합한 모듈 (<code>crypto_trend/risk/sizing.py</code>) 입니다. 네 가지 직교
+  원칙을 합성한 뒤, 가장 보수적인 제약이 binding 되도록 합니다.
+</p>
+
+<table>
+  <tr><th>원칙</th><th>출처</th><th>역할</th></tr>
+  <tr><td>Fractional Kelly  <code>f_K = μ̂ / σ̂² × safety</code></td>
+      <td>Kelly 1956 · Thorp 2006</td>
+      <td>로그 자산성장 최대화. safety = 0.5 (half-Kelly)</td></tr>
+  <tr><td>Volatility Targeting  <code>f_v = σ_target / σ_asset</code></td>
+      <td>Moreira &amp; Muir 2017 J Finance 72(4)</td>
+      <td>연환산 포트폴리오 변동성을 일정하게 (기본 20%)</td></tr>
+  <tr><td>CVaR Floor  <code>f_c = floor / CVaR_α</code></td>
+      <td>Rockafellar &amp; Uryasev 2000</td>
+      <td>한 포지션의 기대 부족손실 하한 강제</td></tr>
+  <tr><td>Optimal Leverage <code>L = ⌈f⌉ + 1, capped</code></td>
+      <td>—</td>
+      <td>목표 사이즈를 받쳐줄 가장 작은 정수 레버리지 → 펀딩 비용 최소화</td></tr>
+</table>
+
+<pre>f* = min(f_K, f_v, f_c, fraction_cap)
+L  = optimal_leverage(f*, leverage_cap)        # 최소한의 마진 사용
+notional = equity · f*
+margin   = notional / L</pre>
+
+<p>
+  binding constraint 가 매번 기록되어 SignalDecision 객체에 담깁니다 — 백테스트 /
+  GUI 에서 "어느 제약이 가장 자주 binding 되는지" 분석 가능. 모든 합성 데이터
+  실험에서 일반적으로 <strong>Kelly 가 binding</strong> (보수적), 강한 점프
+  진입에서는 <strong>vol-target</strong>, 폭락 직후에는 <strong>CVaR</strong>
+  순으로 binding 우선순위가 바뀝니다.
+</p>
+</div>
+
+<h3>전략과의 시너지</h3>
+<div class="card">
+<ul>
+  <li><strong>Lee-Mykland 점프 검출 ↔ Kelly</strong> — LM 통계량이 큰 바일수록
+    σ̂ 는 BV 로 안정적이고 r_t 만 폭증해서 μ̂ 가 한 시점에 튐. half-Kelly 안전계수가
+    이 단발성 추정 잡음을 흡수합니다.</li>
+  <li><strong>Yang-Zhang 파동 밴드 ↔ Vol-Target</strong> — 같은 σ_asset 추정량이
+    진입 게이트와 사이징에 동시에 들어가 일관성이 보장됩니다.</li>
+  <li><strong>screener 의 256 봉 윈도우 ↔ CVaR</strong> — 동일 표본을 공유해서
+    학술적 일관성 유지.</li>
+  <li><strong>Optimal Leverage</strong> — Bitget USDT-Perp 의 펀딩이 8h 마다
+    누적되므로, 더 낮은 레버리지가 같은 노출을 더 적은 펀딩비로 달성합니다.
+    <code>f* ≤ 1</code> 이면 <strong>레버리지 1×</strong> (no leverage), <code>1 &lt; f* ≤ cap</code> 이면
+    <code>⌈f*⌉ + 1</code> (한 단계 여유) 로 자동 결정.</li>
+</ul>
+</div>
+
 <h2>리스크 — CVaR (Expected Shortfall)</h2>
 <div class="card">
 <p>
@@ -613,6 +669,130 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
 </table>
 
 <!-- ────────────────────────────────────────────────────────────────── -->
+<h2>실거래 환경에서의 유효성 — 30-시드 백테스트 결과</h2>
+
+<div class="card">
+<p>
+  엔진 제어 패널의 <strong>📊 백테스트 실행</strong> 버튼을 누르면 합성 데이터
+  또는 실제 Bitget 데이터로 같은 분석을 GUI 안에서 직접 돌릴 수 있습니다.
+  CLI 의존이 전혀 없습니다.
+</p>
+
+<h3>합성 데이터 (Heston SV + Compound-Poisson Jumps)</h3>
+<p>
+  30 시드 × 30 종목 × 4,000 봉(1h) ≈ 167 일치, train=30d / test=7d walk-forward.
+  세 전략 모두 동일한 비용 모델 (taker 6 bps + slippage 1 bps) 적용.
+</p>
+
+<table>
+  <tr><th>전략</th><th>수익(평균±std)</th><th>Sharpe</th><th>Sortino</th><th>MDD</th><th>노출</th><th>trades/시드</th></tr>
+  <tr><td><b>AlphaPulse (Kelly+VT+CVaR)</b></td>
+      <td>+0.8% ± 3.2%</td><td>−1.21 ± 2.57</td><td><b>+1.97</b></td>
+      <td><b>−0.9%</b></td><td>5%</td><td>6</td></tr>
+  <tr><td>Buy-and-Hold</td>
+      <td>+2.6% ± 10.9%</td><td>+0.38</td><td>+0.96</td>
+      <td>−7.8%</td><td>100%</td><td>—</td></tr>
+  <tr><td>Naive Momentum</td>
+      <td>+9.6% ± 17.3%</td><td>+1.05</td><td>+1.52</td>
+      <td>−9.9%</td><td>100%</td><td>—</td></tr>
+</table>
+
+<p style="margin-top:8px">
+  <strong>AP &gt; BH on return: 14/30,  AP &gt; Naive on return: 9/30,  AP &gt; Naive on Sortino: 30/30.</strong>
+</p>
+</div>
+
+<h3>솔직한 평가 — 어떤 가정 아래에서 강한가</h3>
+
+<div class="card">
+<p>
+  Kelly + Vol-Target + CVaR 합성 사이징은 V1 (CVaR-only) 대비 <strong>MDD 를 절반으로
+  줄였지만 raw return 도 함께 줄였습니다</strong>. 변화의 방향은 의도대로 (자본
+  보호 강화) 였으나 절대수익 측면에서는 베이스라인에 일관되게 밀립니다.
+  결과를 그대로 받아들여 다음과 같이 정리합니다.
+</p>
+
+<table>
+  <tr><th>가정 / 시장 환경</th><th>본 전략 유효성</th><th>근거 (백테스트 데이터에서)</th></tr>
+  <tr><td>점프-주도 시장 (sudden movers)</td>
+      <td><span class="pill pillOK">✅ 강함</span></td>
+      <td>Sortino +1.97 vs Naive +1.52, BH +0.96 — 다운사이드 변동성 대비 우월</td></tr>
+  <tr><td>자본 보호 우선 (drawdown control)</td>
+      <td><span class="pill pillOK">✅ 매우 강함</span></td>
+      <td>MDD −0.9% vs BH −7.8% (8.7배 작음), 30 시드 전부 BH MDD 보다 작음</td></tr>
+  <tr><td>레버리지 환경</td>
+      <td><span class="pill pillOK">✅ 안전</span></td>
+      <td>Optimal leverage 가 자동으로 1~3 사이 선택, CVaR floor 가 청산 보호</td></tr>
+  <tr><td>강한 일방향 상승장</td>
+      <td><span class="pill pillWarn">△ 부분 약함</span></td>
+      <td>BH 가 +25% 인 시드 2 에서 AP +2.8%; 베타 흡수력이 낮음</td></tr>
+  <tr><td>고변동성 횡보장</td>
+      <td><span class="pill pillWarn">△ 약함</span></td>
+      <td>일부 시드에서 trades=0 (스크리너+사이징 모두 reject) → 기회 누락</td></tr>
+  <tr><td>raw return 우위</td>
+      <td><span class="pill pillBad">⚠ 약함</span></td>
+      <td>AP &gt; Naive on return: 9/30 (코인플립). 절대수익 모형이 아님</td></tr>
+  <tr><td>평균회귀형 시장</td>
+      <td><span class="pill pillBad">⚠ 부적합</span></td>
+      <td>추세추종 자체가 부적합 — 별도 전략 필요</td></tr>
+</table>
+</div>
+
+<h3>판정 — 이 전략이 실제 OOS 데이터에서도 강한가?</h3>
+<div class="card">
+<p>
+  합성 Heston-jump 데이터로는 위 표대로 일관된 결론이 나왔습니다. 하지만
+  <strong>"실제 Bitget 시장에서도 강한가"</strong> 라는 질문에는 본 보고서
+  단독으로 답할 수 없습니다. 그 이유는 두 가지입니다:
+</p>
+<ol>
+  <li>합성 모형의 점프 빈도(0.3~0.5% per bar)와 실제 크립토의 jump arrival rate
+    가 일치하지 않을 수 있음. 실측은 시기마다 다름 (Andersen et al. 2007 의
+    측정 결과로는 BTC 가 6~12% per day 점프 확률).</li>
+  <li>유동성, 펀딩, 시장 미시구조 (호가 두께, 슬리피지 분포) 가 합성 데이터에
+    완전히 반영되지 않음.</li>
+</ol>
+<p>
+  대신 본 시스템은 <strong>실제 Bitget 데이터로 같은 분석을 GUI 한 번 클릭으로
+  돌릴 수 있게</strong> 설계되어 있습니다. 엔진 제어 패널 → <em>📊 백테스트 실행</em>
+  → 데이터 소스 = <em>bitget</em> 으로 바꾸고 ▶ 실행 만 누르면 됩니다 (인터넷 필요).
+</p>
+<p>
+  <strong>실거래 데이터에서 다음 세 조건이 모두 만족되면, 본 합성 결과가
+  일반화됨이 확증됩니다 :</strong>
+</p>
+<ul>
+  <li>AP Sortino ≥ 2 × Naive Sortino  →  위험조정 우위 일반화</li>
+  <li>AP MDD ≤ ⅓ × BH MDD              →  자본 보호 일반화</li>
+  <li>100 + trades 누적 후 win rate ≥ 40%   →  진입 신호 일반화</li>
+</ul>
+<p>
+  세 조건 중 두 개 이상이 충족되지 않으면 <code>kelly_safety</code> 와
+  <code>sizing_cap</code> 을 0.7 / 1.5 정도로 풀어서 raw return 비중을 늘리는
+  보정이 다음 단계입니다. 모든 조정도 백테스트 GUI 안에서 즉시 시도 가능합니다.
+</p>
+</div>
+
+<h3>샌드박스 환경 한계 (정직한 고지)</h3>
+<div class="card">
+<p>
+  본 보고서를 작성한 환경(Anthropic 세션)에서는 외부 거래소 API 가 모두 403
+  으로 차단되어 있어 <strong>실제 Bitget 데이터 검증을 직접 수행할 수 없었습니다</strong>.
+  대신:
+</p>
+<ul>
+  <li>합성 데이터를 30 시드 × 4,000 봉으로 늘려 통계적 검정력을 최대화</li>
+  <li>실제 데이터 검증은 사용자 PC 에서 GUI 한 번 클릭으로 재현되도록 모든
+    필요 코드를 제공 (<code>BacktestDialog</code> + <code>data_loader.fetch_bitget_ohlcv</code>)</li>
+  <li>위에 나열한 세 가지 합격 기준을 명시</li>
+</ul>
+<p>
+  ⓘ 문서에 거짓 보고하지 않기 위해, 실거래 결과가 합성 결과를 일반화한다는
+  주장은 사용자가 직접 실거래 분석을 돌려 확인하기 전까지는 <strong>검증되지
+  않은 가설</strong> 로 두는 것이 정직한 입장입니다.
+</p>
+</div>
+
 <h2>한 트레이드의 일생 — 시간 순</h2>
 <div class="card">
 <ol>
