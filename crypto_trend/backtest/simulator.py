@@ -74,14 +74,15 @@ class StrategySimulator:
     slippage_bps: float = 1.0
     bars_per_year: float = 365 * 24
     # rescreen_every=1 mirrors the live engine, which calls the screener
-    # once per bar (= once per cycle with 1h timeframe). Larger values
-    # would let entry signals fire on stale picks for up to N-1 extra
-    # bars, which would NOT match live behaviour.
+    # once per bar (= once per cycle with 1h timeframe).
     rescreen_every: int = 1
-    # Funding-rate provider — backtest passes None for synthetic data
-    # and `lambda s: None` for bitget data unless a real history feed is
-    # supplied. None is also what the live engine passes when funding is
-    # unavailable, so the parity holds.
+    # Pick stickiness — once the screener picks a symbol, it stays
+    # "active" for `pick_ttl` bars. This is critical: without
+    # stickiness, a pick is lost the next bar even if the Donchian
+    # breakout would have occurred 2 bars later. Live engine has the
+    # same effective behaviour because each cycle re-screens.
+    pick_ttl: int = 24
+    # Funding-rate provider — None matches live when not available.
     funding_rate_provider: object = None
 
     # ------------------------------------------------------------------ #
@@ -123,8 +124,9 @@ class StrategySimulator:
         trades: list[Trade] = []
         bar_pnl = np.zeros(n_bars, dtype=float)
         bars_with_position = 0
-        active_picks: dict[str, str] = {}        # symbol -> screener side
-        rescreen_history: list[tuple[int, int, int]] = []   # (rescreen_idx, candidates, picks)
+        # symbol -> (side, expires_at_bar_idx)
+        active_picks: dict[str, tuple[str, int]] = {}
+        rescreen_history: list[tuple[int, int, int]] = []
 
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
 
@@ -142,7 +144,14 @@ class StrategySimulator:
                     quote_volume_provider=lambda s: 1e12,
                     funding_rate_provider=self.funding_rate_provider,
                 )
-                active_picks = {r.symbol: r.side for r in results}
+                # Refresh fresh picks (extend expiry); old picks linger
+                # until their TTL expires so the strategy gets multiple
+                # bars to find a Donchian breakout.
+                for r in results:
+                    active_picks[r.symbol] = (r.side, t + self.pick_ttl)
+                # Drop expired picks
+                active_picks = {s: v for s, v in active_picks.items()
+                                  if v[1] > t}
                 rescreen_history.append((
                     (t - warmup_bars) // self.rescreen_every,
                     len(symbols), len(results),
@@ -208,7 +217,7 @@ class StrategySimulator:
                     continue
                 if sym not in active_picks:
                     continue
-                want = active_picks[sym]
+                want, _expiry = active_picks[sym]
                 hi_prev = pc.donchian_hi[t - 1]
                 lo_prev = pc.donchian_lo[t - 1]
                 broke_up = close > hi_prev

@@ -57,8 +57,14 @@ class TradingEngine:
         # a freshly-started engine has too little evidence for the
         # calibration logic to be trustworthy.
         self.oos_warmup_cycles = 5
-        # Optional progress callback (stage, current, total) — let the
-        # GUI render real-time feedback during long-running cycles.
+        # Sticky picks — once a symbol passes the screener, keep it as a
+        # candidate for `pick_ttl` cycles even if subsequent screens drop
+        # it. This gives the strategy multiple bars to find a Donchian
+        # breakout, exactly matching the backtest simulator's behaviour.
+        # symbol -> (side, expires_at_cycle_count)
+        self._active_picks: dict[str, tuple[str, int]] = {}
+        self.pick_ttl_cycles = 24
+        # Optional progress callback for the GUI status bar.
         self.progress_callback = None
 
     # ------------------------------------------------------------------ #
@@ -151,27 +157,41 @@ class TradingEngine:
         scored = self.screener.run(
             prefiltered, self._ohlcv, self._quote_volume,
             funding_rate_provider=self._funding_rate)
+
+        # Refresh sticky picks: extend (or create) TTL for fresh hits;
+        # expire old picks whose TTL has elapsed.
+        for r in scored:
+            self._active_picks[r.symbol] = (
+                r.side, self._cycle_count + self.pick_ttl_cycles)
+        self._active_picks = {
+            s: v for s, v in self._active_picks.items()
+            if v[1] > self._cycle_count
+        }
+
         log.info(
             f"cycle {self._cycle_count}: universe={len(universe)} "
-            f"prefiltered={len(prefiltered)} picks={len(scored)} "
-            f"(symbols: {[r.symbol for r in scored[:5]]}{'…' if len(scored)>5 else ''})")
+            f"prefiltered={len(prefiltered)} fresh_picks={len(scored)} "
+            f"active_picks={len(self._active_picks)} "
+            f"(top: {[r.symbol for r in scored[:5]]}{'…' if len(scored)>5 else ''})")
         self._emit("screened", len(scored), len(prefiltered))
-        # Mirror to portfolio so the GUI can show universe vs picks live
         self.portfolio.last_screen = {
             "universe": len(universe),
             "prefiltered": len(prefiltered),
             "picks": len(scored),
+            "active_picks": len(self._active_picks),
             "pick_symbols": [r.symbol for r in scored],
         }
 
-        # ---- signal pass per symbol ---------------------------------- #
-        for r in scored:
-            df = self._candles_cache.get(r.symbol)
+        # ---- signal pass per active (sticky) pick -------------------- #
+        # We iterate active_picks rather than just `scored`: a pick that
+        # the screener flagged a few cycles ago is still tradable until
+        # its TTL expires, exactly like the backtest simulator.
+        for sym, (side, _expiry) in list(self._active_picks.items()):
+            df = self._candles_cache.get(sym)
             if df is None or df.empty:
                 continue
 
-            # full-history replay -> Group A "what would have been" + Group C latest bar
-            sigs = self.strategy.generate_signals(df, screener_side=r.side,
+            sigs = self.strategy.generate_signals(df, screener_side=side,
                                                   source=SignalSource.HIST)
             if not sigs:
                 continue

@@ -122,6 +122,12 @@ class StrategyParams:
     risk_per_trade: float = 0.01      # per-trade risk budget (= 1% of equity)
     sizing_cap: float = 2.0           # absolute fraction-of-equity ceiling
     lm_threshold: float = 4.0         # LM stat reference for confidence multiplier
+    # When |LM_t| ≥ direct_entry_lm, treat the jump itself as the
+    # breakout — no need to wait for a Donchian close-confirmation.
+    # This captures the move at its inception, which is the whole point
+    # of LM-jump-driven trend following. Set to a high value (e.g. 8) to
+    # require very extreme jumps for direct entry.
+    direct_entry_lm: float = 5.0
 
 
 class TrendFollowingStrategy:
@@ -177,22 +183,22 @@ class TrendFollowingStrategy:
                 if want is None:
                     want = "long" if broke_up else ("short" if broke_dn else None)
 
-                fired_long = want == "long" and broke_up and inside_band
-                fired_short = want == "short" and broke_dn and inside_band
+                # Compute LM at this bar so we can decide whether the
+                # jump itself qualifies as a breakout (direct entry).
+                pre = rets[: i]
+                lm_pre = lee_mykland_statistic(pre, window=24)
+                strong_jump = abs(lm_pre) >= self.p.direct_entry_lm
+
+                fired_long = want == "long" and inside_band and (
+                    broke_up or (strong_jump and lm_pre > 0))
+                fired_short = want == "short" and inside_band and (
+                    broke_dn or (strong_jump and lm_pre < 0))
                 if fired_long or fired_short:
                     side = "long" if fired_long else "short"
                     side_sign = 1 if fired_long else -1
-                    # Compute the screener's own internals at this bar, so the
-                    # sizing decision uses the strategy's actual signal context
-                    # (LM jump strength, multi-horizon agreement) rather than
-                    # generic bar-level statistics.
-                    pre = rets[: i]
-                    lm = lee_mykland_statistic(pre, window=24)
-                    if (side_sign > 0) != (lm > 0):
-                        # For HIST replay we may not have a screener pick at
-                        # every bar. Fall back to a neutral confidence so old
-                        # backtests still produce signals.
-                        lm = side_sign * abs(lm)
+                    # Reuse lm_pre computed above; sign-align for sizing
+                    lm = lm_pre if (side_sign > 0) == (lm_pre > 0) \
+                          else side_sign * abs(lm_pre)
                     agree = multi_horizon_alignment(pre, side_sign,
                                                       horizons=(1, 4, 24))
                     sample = rets[max(0, i - 256): i]
@@ -209,7 +215,12 @@ class TrendFollowingStrategy:
                         leverage_cap=int(self.p.leverage_cap),
                     )
                     f = decision.fraction
-                    reason = "donchian_break_up" if fired_long else "donchian_break_dn"
+                    if fired_long and not broke_up and strong_jump:
+                        reason = "lm_direct_long"
+                    elif fired_short and not broke_dn and strong_jump:
+                        reason = "lm_direct_short"
+                    else:
+                        reason = "donchian_break_up" if fired_long else "donchian_break_dn"
                     out.append(Signal(ts, df.attrs.get("symbol", ""), side,
                                       SignalType.ENTRY, source, close, f,
                                       reason,

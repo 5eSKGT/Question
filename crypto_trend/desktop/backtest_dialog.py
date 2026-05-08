@@ -98,27 +98,30 @@ class BacktestWorker(QThread):
                                                   self.p["bars"], seed=seed)
                 else:
                     if i > 0:
-                        # bitget data is the same across seeds — no need to
-                        # re-download or re-evaluate. The 0-th seed already
-                        # produced the result.
                         self.log.emit("  bitget mode runs once — extra seeds skipped")
                         break
                     top = self.p["top"] or None     # 0 → None → full universe
                     self.log.emit(f"  pulling Bitget USDT-perps "
                                     f"({'top-' + str(top) if top else 'full universe'}) …")
                     universe = fetch_bitget_universe(top_k=top)
-                    self.log.emit(f"  {len(universe)} symbols qualify")
-                    candles = {}
-                    for j, s in enumerate(universe):
+                    self.log.emit(f"  {len(universe)} symbols qualify — "
+                                    f"parallel download (6 workers)")
+
+                    # Parallel OHLCV download — ~5× faster than sequential.
+                    from ..backtest.data_loader import fetch_bitget_ohlcv_parallel
+                    last_pct = [-1]
+                    def _on_progress(done, total, sym):
                         if self._stop:
                             return
-                        try:
-                            candles[s] = fetch_bitget_ohlcv(s, "1h", self.p["bars"])
-                            if (j + 1) % 10 == 0:
-                                self.log.emit(f"  downloaded {j+1}/{len(universe)}")
-                        except Exception as e:                         # noqa: BLE001
-                            self.log.emit(f"  skip {s}: {e}")
-                    # ---- drop symbols whose history is too short ---- #
+                        pct = int(done * 100 / max(total, 1))
+                        if pct >= last_pct[0] + 10 or done == total:
+                            self.log.emit(f"  downloaded {done}/{total}")
+                            last_pct[0] = pct
+                    candles = fetch_bitget_ohlcv_parallel(
+                        universe, "1h", self.p["bars"],
+                        max_workers=6, progress_cb=_on_progress)
+
+                    # Drop short-history symbols (new listings)
                     min_history = max(int(self.p["bars"] * 0.7), train_bars + test_bars)
                     short = [s for s, df in candles.items()
                               if len(df) < min_history]

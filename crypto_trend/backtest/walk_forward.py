@@ -40,6 +40,7 @@ def walk_forward_run(
     train_bars: int = 24 * 30,           # 30 days
     test_bars: int = 24 * 7,             # 7 days
     simulator: StrategySimulator | None = None,
+    oos_warmup_windows: int = 3,         # mirror live engine warmup behaviour
 ) -> WalkForwardResult:
     sim = simulator or StrategySimulator()
     if not candles:
@@ -122,13 +123,24 @@ def walk_forward_run(
                 if report.status == AdaptiveStatus.RECALIBRATED:
                     captured_sim.strategy.p = report.params
             except RecalibrationFailed as e:
-                oos_history.append({
-                    "window": window_idx,
-                    "status": "halted",
-                    "message": str(e),
-                })
-                halted_at = window_idx
-                break
+                # Warmup guard: live engine never halts during the first
+                # few cycles either — applying the same here lets the
+                # strategy accumulate evidence before the OOS gate
+                # binds.
+                if window_idx < oos_warmup_windows:
+                    oos_history.append({
+                        "window": window_idx,
+                        "status": "warmup",
+                        "message": f"deferred halt during warmup: {e}",
+                    })
+                else:
+                    oos_history.append({
+                        "window": window_idx,
+                        "status": "halted",
+                        "message": str(e),
+                    })
+                    halted_at = window_idx
+                    break
 
         start += step
         window_idx += 1
