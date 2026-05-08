@@ -45,8 +45,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog,
                                 QVBoxLayout, QWidget)
 
 from ..config import STATE_DIR
-from .theme import (ACCENT, ACCENT_DEEP, GRAY, GREEN, RED, SUBTEXT,
-                    SURFACE, icon_path)
+from .theme import (ACCENT, ACCENT_DEEP, BORDER, GRAY, GREEN, RED,
+                    SUBTEXT, SURFACE, icon_path)
 
 
 # --------------------------------------------------------------------------- #
@@ -134,17 +134,11 @@ class BacktestWorker(QThread):
                     self.log.emit("  ⚠ no candles loaded — skipping seed")
                     continue
 
-                # ---- strategy parameters from dialog --------------------- #
-                strat_params = StrategyParams(
-                    cvar_floor=self.p["cvar_floor"],
-                    cvar_alpha=self.p["cvar_alpha"],
-                    target_annual_vol=self.p["target_vol"],
-                    kelly_safety=self.p["kelly_safety"],
-                    sizing_cap=self.p["sizing_cap"],
-                    leverage_cap=self.p["leverage_cap"],
-                )
+                # ---- strategy = canonical defaults (live mirror) -------- #
+                # NO user overrides: the same StrategyParams() the live
+                # engine constructs at startup is what the simulator runs.
                 sim = StrategySimulator(
-                    strategy=TrendFollowingStrategy(strat_params),
+                    strategy=TrendFollowingStrategy(StrategyParams()),
                     taker_fee=self.p["taker_fee"],
                     slippage_bps=self.p["slippage_bps"],
                 )
@@ -298,40 +292,69 @@ class BacktestDialog(QDialog):
     # Build sub-panels
     # ================================================================== #
     def _build_form_panel(self) -> QWidget:
-        # Inner content widget — holds every form field
+        # Inner content widget — minimal: data source choice + read-only
+        # strategy display. Strategy parameters and cost model are NOT
+        # exposed because the backtest must run with the *exact* same
+        # settings the live engine will use; allowing user knobs would
+        # break the live mirror invariant.
         inner = QWidget()
         v = QVBoxLayout(inner)
         v.setContentsMargins(0, 0, 6, 0)
         v.setSpacing(8)
 
-        head = QLabel("⚙  설정"); head.setStyleSheet("font-size:14px; font-weight:600;")
+        head = QLabel("📊  백테스트")
+        head.setStyleSheet("font-size:14px; font-weight:600;")
         v.addWidget(head)
 
-        # Environment summary — read from live config, NOT editable.
         from ..config import SETTINGS
+        from ..strategy.trend_following import StrategyParams
+        sp = StrategyParams()                              # canonical defaults
         wf_min_bars = (SETTINGS.walk_forward_train_days * 24
                         + 8 * SETTINGS.walk_forward_test_days * 24)
-        bars_default = max(2000, wf_min_bars)
+        bars_default = max(SETTINGS.backtest_bars, wf_min_bars)
+
         env_card = QLabel(
-            f"<b>실거래 환경 미러링</b><br>"
-            f"• 유니버스: 전체 USDT-Perp · 거래대금 ≥ $5M (live 동일)<br>"
-            f"• 타임프레임: 1h · 다운로드 봉 수: {bars_default}<br>"
-            f"&nbsp;&nbsp;&nbsp;<span style='color:{SUBTEXT}'>"
-            f"라이브의 <code>history_bars=500</code>은 *사이클당 분석 윈도우*이지 "
-            f"백테스트 길이가 아니므로, walk-forward train/test 를 충분히 돌리도록 "
-            f"별도 산정합니다.</span><br>"
-            f"• Walk-forward: train {SETTINGS.walk_forward_train_days}d / "
-            f"test {SETTINGS.walk_forward_test_days}d (live SETTINGS 동일)<br>"
-            f"• 스크리너 / 전략 / OOS 자가보정: live 와 동일 코드 경로<br>"
-            f"• 베이스라인 비교: Buy-and-Hold, Naive Momentum (실제 매매에서는 사용 안 함)<br>"
-            f"<span style='color:{SUBTEXT}'>이 항목들은 사용자가 변경할 수 없습니다 — "
-            f"그래야 백테스트 결과가 실제 운용을 의미 있게 예측합니다.</span>")
+            f"<b>실거래 환경 100% 미러링</b><br>"
+            f"<span style='color:{SUBTEXT}'>"
+            f"이 백테스트의 모든 환경 파라미터는 라이브 엔진과 동일합니다. "
+            f"전략 파라미터, 사이징 알고리즘, 스크리너 임계치, OOS 자가보정, "
+            f"비용 모델 모두 사용자가 변경할 수 없습니다 — 그래야 결과가 "
+            f"실제 운용을 의미 있게 예측합니다.</span><br><br>"
+            f"<b>유니버스</b> · 전체 USDT-Perp / 24h 거래대금 ≥ $5M<br>"
+            f"<b>타임프레임 / 봉 수</b> · 1h × {bars_default}<br>"
+            f"<b>Walk-forward</b> · train {SETTINGS.walk_forward_train_days}d "
+            f"/ test {SETTINGS.walk_forward_test_days}d<br>"
+            f"<b>비용 모델</b> · taker {SETTINGS.taker_fee*1e4:.1f} bps "
+            f"+ slippage {SETTINGS.slippage_bps:.1f} bps<br>"
+            f"<b>OOS 자가보정</b> · 윈도우마다 AdaptiveOOS.step() 호출<br>"
+            f"<b>스크리너 빈도</b> · 매 1봉 (live 사이클과 동일)")
         env_card.setWordWrap(True)
         env_card.setTextFormat(Qt.RichText)
         env_card.setStyleSheet(
             f"background:#f3f6fa; border:1px solid {ACCENT}; "
             "border-radius:8px; padding:10px; font-size:11.5px;")
         v.addWidget(env_card)
+
+        strat_card = QLabel(
+            f"<b>적용될 전략 (read-only)</b><br>"
+            f"<span style='color:{SUBTEXT}'>이 값들이 라이브 엔진의 매매에 "
+            f"그대로 사용됩니다.</span><br><br>"
+            f"<b>지표 (OOS 자동보정)</b><br>"
+            f"&nbsp;&nbsp;Donchian breakout = {sp.breakout_n}<br>"
+            f"&nbsp;&nbsp;ATR period = {sp.atr_n}, mult = {sp.chandelier_mult:.1f}<br>"
+            f"&nbsp;&nbsp;Yang-Zhang n = {sp.yz_n}, band = {sp.band_mult:.1f}<br>"
+            f"&nbsp;&nbsp;Time stop = {sp.time_stop_bars} bars<br>"
+            f"<b>리스크 / 사이징 (committed)</b><br>"
+            f"&nbsp;&nbsp;CVaR α = {sp.cvar_alpha:.2f}, floor = {sp.cvar_floor:.2f}<br>"
+            f"&nbsp;&nbsp;Vol target = {sp.target_annual_vol:.2f}<br>"
+            f"&nbsp;&nbsp;Kelly safety = {sp.kelly_safety:.2f}, cap = {sp.sizing_cap:.1f}×<br>"
+            f"&nbsp;&nbsp;Max leverage = {sp.leverage_cap:.0f}×")
+        strat_card.setWordWrap(True)
+        strat_card.setTextFormat(Qt.RichText)
+        strat_card.setStyleSheet(
+            f"background:#fafbfc; border:1px solid {BORDER}; "
+            "border-radius:8px; padding:10px; font-size:11.5px;")
+        v.addWidget(strat_card)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
@@ -387,78 +410,6 @@ class BacktestDialog(QDialog):
         self.test_days_spin.hide()
 
         v.addLayout(form)
-
-        sep = QLabel("전략 파라미터"); sep.setStyleSheet(
-            f"color:{ACCENT_DEEP}; font-weight:600; padding-top:8px;")
-        v.addWidget(sep)
-
-        sform = QFormLayout()
-        sform.setLabelAlignment(Qt.AlignRight)
-
-        self.cvar_floor = QDoubleSpinBox(); self.cvar_floor.setRange(-0.5, -0.005)
-        self.cvar_floor.setValue(-0.08); self.cvar_floor.setSingleStep(0.005)
-        self.cvar_floor.setDecimals(4)
-        sform.addRow("CVaR 하한", self.cvar_floor)
-
-        self.cvar_alpha = QDoubleSpinBox(); self.cvar_alpha.setRange(0.005, 0.20)
-        self.cvar_alpha.setValue(0.05); self.cvar_alpha.setSingleStep(0.005)
-        self.cvar_alpha.setDecimals(4)
-        sform.addRow("CVaR α", self.cvar_alpha)
-
-        self.target_vol = QDoubleSpinBox(); self.target_vol.setRange(0.05, 1.0)
-        self.target_vol.setValue(0.20); self.target_vol.setSingleStep(0.05)
-        sform.addRow("Vol-target (연환산)", self.target_vol)
-
-        self.kelly_safety = QDoubleSpinBox(); self.kelly_safety.setRange(0.0, 1.0)
-        self.kelly_safety.setValue(0.5); self.kelly_safety.setSingleStep(0.05)
-        sform.addRow("Kelly 안전계수", self.kelly_safety)
-
-        self.sizing_cap = QDoubleSpinBox(); self.sizing_cap.setRange(0.05, 5.0)
-        self.sizing_cap.setValue(1.0); self.sizing_cap.setSingleStep(0.1)
-        sform.addRow("최대 사이즈 (× equity)", self.sizing_cap)
-
-        self.leverage_cap = QSpinBox(); self.leverage_cap.setRange(1, 20)
-        self.leverage_cap.setValue(3)
-        sform.addRow("최대 레버리지", self.leverage_cap)
-
-        v.addLayout(sform)
-
-        sep2 = QLabel("비용 모델"); sep2.setStyleSheet(
-            f"color:{ACCENT_DEEP}; font-weight:600; padding-top:8px;")
-        v.addWidget(sep2)
-
-        cform = QFormLayout()
-        cform.setLabelAlignment(Qt.AlignRight)
-        self.taker_fee = QDoubleSpinBox(); self.taker_fee.setRange(0.0, 0.005)
-        self.taker_fee.setValue(0.0006); self.taker_fee.setSingleStep(0.0001)
-        self.taker_fee.setDecimals(5)
-        cform.addRow("Taker 수수료", self.taker_fee)
-        self.slippage_bps = QDoubleSpinBox(); self.slippage_bps.setRange(0.0, 50.0)
-        self.slippage_bps.setValue(1.0); self.slippage_bps.setSingleStep(0.5)
-        cform.addRow("슬리피지 (bps)", self.slippage_bps)
-        v.addLayout(cform)
-
-        # ---- preset row -------------------------------------------- #
-        sep3 = QLabel("프리셋")
-        sep3.setStyleSheet(f"color:{ACCENT_DEEP}; font-weight:600; padding-top:8px;")
-        v.addWidget(sep3)
-        preset_help = QLabel(
-            "방어형: 자본 보호 우선 — 하락장에 강함 / 상승장 비참여\n"
-            "균형형: 모든 레짐 양수 수익 — Sortino 1.5–3 / raw return 약함\n"
-            "공격형: 상승장 흡수력 ↑ — MDD 도 같이 커짐")
-        preset_help.setStyleSheet(f"color:{SUBTEXT}; font-size:11px;")
-        preset_help.setWordWrap(True)
-        v.addWidget(preset_help)
-        prow = QHBoxLayout()
-        b1 = QPushButton("🛡 방어형")
-        b1.setObjectName("ghost"); b1.clicked.connect(self._preset_defensive)
-        b2 = QPushButton("⚖ 균형형")
-        b2.setObjectName("ghost"); b2.clicked.connect(self._preset_balanced)
-        b3 = QPushButton("🚀 공격형")
-        b3.setObjectName("ghost"); b3.clicked.connect(self._preset_aggressive)
-        prow.addWidget(b1); prow.addWidget(b2); prow.addWidget(b3)
-        v.addLayout(prow)
-
         v.addStretch(1)
         self._on_source_change(self.source_combo.currentIndex())
 
@@ -473,21 +424,9 @@ class BacktestDialog(QDialog):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         return scroll
 
-    # ---- preset application ------------------------------------------ #
-    def _preset_defensive(self) -> None:
-        self.cvar_floor.setValue(-0.08); self.cvar_alpha.setValue(0.05)
-        self.target_vol.setValue(0.20); self.kelly_safety.setValue(0.5)
-        self.sizing_cap.setValue(1.0); self.leverage_cap.setValue(3)
-
-    def _preset_balanced(self) -> None:
-        self.cvar_floor.setValue(-0.10); self.cvar_alpha.setValue(0.05)
-        self.target_vol.setValue(0.30); self.kelly_safety.setValue(1.0)
-        self.sizing_cap.setValue(2.0); self.leverage_cap.setValue(3)
-
-    def _preset_aggressive(self) -> None:
-        self.cvar_floor.setValue(-0.15); self.cvar_alpha.setValue(0.05)
-        self.target_vol.setValue(0.40); self.kelly_safety.setValue(1.0)
-        self.sizing_cap.setValue(3.0); self.leverage_cap.setValue(5)
+    # Strategy parameters are no longer user-tunable — the strategy
+    # IS the canonical StrategyParams() committed in the source. This
+    # was deliberately removed to enforce live/backtest parity.
 
     def _build_results_panel(self) -> QWidget:
         wrapper = QWidget()
@@ -550,6 +489,10 @@ class BacktestDialog(QDialog):
 
     # ================================================================== #
     def _gather_params(self) -> dict:
+        # All strategy + cost parameters come from SETTINGS / canonical
+        # StrategyParams — NOT from any GUI control. The dialog only
+        # selects the data source and (for synthetic) reproducibility seeds.
+        from ..config import SETTINGS
         return {
             "source": "synthetic" if self.source_combo.currentIndex() == 0 else "bitget",
             "seeds": int(self.seeds_spin.value()),
@@ -558,14 +501,8 @@ class BacktestDialog(QDialog):
             "bars": int(self.bars_spin.value()),
             "train_days": int(self.train_days_spin.value()),
             "test_days": int(self.test_days_spin.value()),
-            "cvar_floor": float(self.cvar_floor.value()),
-            "cvar_alpha": float(self.cvar_alpha.value()),
-            "target_vol": float(self.target_vol.value()),
-            "kelly_safety": float(self.kelly_safety.value()),
-            "sizing_cap": float(self.sizing_cap.value()),
-            "leverage_cap": float(self.leverage_cap.value()),
-            "taker_fee": float(self.taker_fee.value()),
-            "slippage_bps": float(self.slippage_bps.value()),
+            "taker_fee": float(SETTINGS.taker_fee),
+            "slippage_bps": float(SETTINGS.slippage_bps),
         }
 
     # ================================================================== #

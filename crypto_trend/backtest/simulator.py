@@ -73,7 +73,16 @@ class StrategySimulator:
     taker_fee: float = 6e-4
     slippage_bps: float = 1.0
     bars_per_year: float = 365 * 24
-    rescreen_every: int = 24
+    # rescreen_every=1 mirrors the live engine, which calls the screener
+    # once per bar (= once per cycle with 1h timeframe). Larger values
+    # would let entry signals fire on stale picks for up to N-1 extra
+    # bars, which would NOT match live behaviour.
+    rescreen_every: int = 1
+    # Funding-rate provider — backtest passes None for synthetic data
+    # and `lambda s: None` for bitget data unless a real history feed is
+    # supplied. None is also what the live engine passes when funding is
+    # unavailable, so the parity holds.
+    funding_rate_provider: object = None
 
     # ------------------------------------------------------------------ #
     def run(self, candles: dict[str, pd.DataFrame],
@@ -131,6 +140,7 @@ class StrategySimulator:
                     symbols,
                     ohlcv_provider=_ohlcv_provider,
                     quote_volume_provider=lambda s: 1e12,
+                    funding_rate_provider=self.funding_rate_provider,
                 )
                 active_picks = {r.symbol: r.side for r in results}
                 rescreen_history.append((

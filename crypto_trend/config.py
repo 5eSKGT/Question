@@ -67,6 +67,14 @@ class Settings:                 # NOTE: not frozen — GUI mutates at runtime
     log_level: str
     ui_host: str
     ui_port: int
+    # Cost model — Bitget USDT-Perp defaults. Live engine uses these
+    # implicitly via the exchange; backtest reads from here so its
+    # accounting matches live without exposing a knob to the user.
+    taker_fee: float = 6e-4
+    slippage_bps: float = 1.0
+    # Backtest history depth — derived to give walk-forward room while
+    # keeping API calls reasonable. NOT exposed to the user.
+    backtest_bars: int = 2000
 
     @property
     def is_live(self) -> bool:
