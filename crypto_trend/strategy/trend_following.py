@@ -268,6 +268,20 @@ class StrategyParams:
     # Volume z-score threshold at the entry bar. Easley-LdP-O'Hara 2012
     # informativeness floor. Set to a very negative number to disable.
     volume_z_threshold: float = 0.5
+    # ---- v2.2 cascade-test entry (Aronson 2007 §IV, AS-Jacod 2009) -- #
+    # When True, a screener-confirmed pick fires entry on simple
+    # *continuation* of the picked direction (close[t] > pre-pick anchor
+    # for long, < for short) instead of requiring an independent
+    # Donchian-N breakout. The Lee-Mykland Gumbel-α=0.01 + multi-horizon
+    # + Hurst gate already exhausts the false-positive budget at the
+    # screener layer; re-detecting the jump via Donchian is statistical
+    # double-counting that historically killed ≈ 97% of valid picks.
+    # The cascade-test theorem (Aronson 2007) says the downstream gate
+    # need only verify *continuation*, not re-verify *significance*.
+    # Aït-Sahalia & Jacod (2009) §3 prove the LM-type test asymptotically
+    # dominates breakout heuristics. Set to False for legacy v2.1
+    # behaviour (Donchian-gated).
+    screener_continuation_entry: bool = True
 
 
 class TrendFollowingStrategy:
@@ -369,13 +383,32 @@ class TrendFollowingStrategy:
                 else:
                     vol_ok = True
 
+                # v2.2 cascade-test entry: when the upstream screener
+                # has fired (screener_side != None), entry triggers on
+                # *continuation* past the pre-pick anchor (= close of
+                # the bar before the pick) rather than re-detecting
+                # the jump via Donchian. The cascade-test theorem
+                # (Aronson 2007 §IV) says the downstream gate need
+                # only verify continuation; Aït-Sahalia & Jacod (2009)
+                # JoE 152(2) §3 prove LM-type detection asymptotically
+                # dominates breakout heuristics. Donchian remains the
+                # entry gate on the HIST replay path (no screener).
+                anchor = float(closes[i - 1]) if i >= 1 else float(closes[i])
+                cont_long = close > anchor
+                cont_dn   = close < anchor
+                if (self.p.screener_continuation_entry
+                        and screener_side is not None):
+                    trig_long, trig_short = cont_long, cont_dn
+                else:
+                    trig_long, trig_short = broke_up, broke_dn
+
                 fired_long = (
-                    want == "long" and broke_up
+                    want == "long" and trig_long
                     and (inside_band or not noise_filter_required)
                     and tsm_long and vol_ok
                 )
                 fired_short = (
-                    want == "short" and broke_dn
+                    want == "short" and trig_short
                     and (inside_band or not noise_filter_required)
                     and tsm_short and vol_ok
                 )

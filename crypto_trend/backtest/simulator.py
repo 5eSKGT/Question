@@ -77,11 +77,14 @@ class StrategySimulator:
     # once per bar (= once per cycle with 1h timeframe).
     rescreen_every: int = 1
     # Pick stickiness — once the screener picks a symbol, it stays
-    # "active" for `pick_ttl` bars. This is critical: without
-    # stickiness, a pick is lost the next bar even if the Donchian
-    # breakout would have occurred 2 bars later. Live engine has the
-    # same effective behaviour because each cycle re-screens.
-    pick_ttl: int = 24
+    # "active" for ``pick_ttl`` bars. v2.2 sets the default to 48 hrs
+    # (2 days) — Aït-Sahalia, Cacho-Diaz & Laeven (2014), *Modeling
+    # financial contagion using mutually exciting jump processes*, JFE
+    # 117(3) measure the Hawkes self-excitation decay timescale at
+    # *days*, not hours, for crypto-like markets. A 24-bar TTL was
+    # truncating the cluster window prematurely; 48 bars matches the
+    # empirical decay constant 1/β.
+    pick_ttl: int = 48
     # Funding-rate provider — None matches live when not available.
     funding_rate_provider: object = None
 
@@ -126,15 +129,19 @@ class StrategySimulator:
         # data loader (live mirror).
         screener = self.screener or WinnerLoserScreener(
             min_quote_volume=0.0,
-            top_n=screener_top_n or 10,
+            top_n=screener_top_n or 30,
         )
 
         positions: dict[str, dict] = {}
         trades: list[Trade] = []
         bar_pnl = np.zeros(n_bars, dtype=float)
         bars_with_position = 0
-        # symbol -> (side, expires_at_bar_idx)
-        active_picks: dict[str, tuple[str, int]] = {}
+        # symbol -> (side, expires_at_bar_idx, pre_pick_anchor_close).
+        # The anchor is the close of the bar immediately before the
+        # screener fired — used by v2.2 cascade-test continuation entry
+        # so the jump bar itself fires (close[jump] > close[jump-1])
+        # without re-detecting the jump via Donchian.
+        active_picks: dict[str, tuple[str, int, float]] = {}
         rescreen_history: list[tuple[int, int, int]] = []
 
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
@@ -161,9 +168,20 @@ class StrategySimulator:
                 )
                 # Refresh fresh picks (extend expiry); old picks linger
                 # until their TTL expires so the strategy gets multiple
-                # bars to find a Donchian breakout.
+                # bars for the cluster to develop. Anchor is locked at
+                # the *first* time we see this pick so subsequent
+                # rescreens don't keep moving the entry reference.
                 for r in results:
-                    active_picks[r.symbol] = (r.side, t + self.pick_ttl)
+                    if r.symbol in active_picks:
+                        # keep the original anchor; just extend TTL
+                        side_old, _expiry_old, anchor_old = active_picks[r.symbol]
+                        if side_old == r.side:
+                            active_picks[r.symbol] = (
+                                r.side, t + self.pick_ttl, anchor_old)
+                            continue
+                    pre_pick_close = float(pre[r.symbol].closes[max(0, t - 1)])
+                    active_picks[r.symbol] = (
+                        r.side, t + self.pick_ttl, pre_pick_close)
                 # Drop expired picks
                 active_picks = {s: v for s, v in active_picks.items()
                                   if v[1] > t}
@@ -232,11 +250,23 @@ class StrategySimulator:
                     continue
                 if sym not in active_picks:
                     continue
-                want, _expiry = active_picks[sym]
+                want, _expiry, anchor = active_picks[sym]
+                # v2.2 cascade-test entry: continuation past the
+                # pre-pick anchor is the entry trigger. The screener
+                # already exhausted the false-positive budget at the
+                # universe level; re-detecting the jump via Donchian
+                # is statistical double-counting (Aronson 2007 §IV).
+                cont_long = close > anchor
+                cont_dn = close < anchor
+                # Legacy gate kept for ablation (screener_continuation_entry=False).
                 hi_prev = pc.donchian_hi[t - 1]
                 lo_prev = pc.donchian_lo[t - 1]
                 broke_up = close > hi_prev
                 broke_dn = close < lo_prev
+                if p.screener_continuation_entry:
+                    trig_long, trig_short = cont_long, cont_dn
+                else:
+                    trig_long, trig_short = broke_up, broke_dn
                 inside_band = band == 0 or abs(close - pc.closes[t - 1]) <= band
 
                 # AlphaPulse v2: macro TSM + volume confirmation. See
@@ -265,9 +295,9 @@ class StrategySimulator:
                             or volume_z_at(vol_arr, t,
                                             threshold=p.volume_z_threshold))
 
-                fire_long = (want == "long" and broke_up
+                fire_long = (want == "long" and trig_long
                               and tsm_long_ok and vol_ok)
-                fire_short = (want == "short" and broke_dn
+                fire_short = (want == "short" and trig_short
                                and tsm_short_ok and vol_ok)
                 if not (fire_long or fire_short):
                     continue

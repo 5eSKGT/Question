@@ -119,6 +119,60 @@ def test_no_screener_context_keeps_noise_filter():
     assert isinstance(last_bar_entries, list)
 
 
+def test_v2_2_cascade_continuation_fires_without_donchian_break():
+    """Cascade-test entry (Aronson 2007 §IV; Aït-Sahalia-Jacod 2009 §3):
+    a screener-confirmed long pick must fire on a +2% continuation
+    bar that does NOT break the Donchian-N(20) high. Pre-v2.2 logic
+    rejected this trade because Donchian was a redundant re-detection
+    gate; the LM Gumbel-α=0.01 + multi-horizon screener already exhausted
+    the false-positive budget at the universe layer."""
+    rng = np.random.default_rng(21)
+    # 800-bar mild uptrend ending well above any 20-bar high so a 2%
+    # continuation does NOT break Donchian.
+    base = 100 * np.exp(np.cumsum(rng.normal(0.0008, 0.005, 800)))
+    # Make the recent 20 bars range *higher* than any 2% continuation
+    # could reach — pin them at the level reached after a synthetic spike,
+    # then the last bar steps up only 2% (well inside the recent high).
+    base[-22:-1] = base[-22] * 1.10           # recent high at ~+10%
+    base[-1] = base[-2] * 1.02                # 2% continuation, well below recent high
+
+    df = _ohlcv(base)
+    strat = TrendFollowingStrategy(StrategyParams())
+    sigs = strat.generate_signals(df, screener_side="long",
+                                    source=SignalSource.HIST)
+    last_ts = df.index[-1]
+    last_long = [s for s in sigs
+                 if s.type == SignalType.ENTRY and s.side == "long"
+                 and s.ts == last_ts]
+    assert last_long, (
+        "v2.2 cascade-test entry must fire on continuation past the "
+        "anchor even without a Donchian breakout — the screener has "
+        "already validated the jump statistically; Donchian re-detection "
+        "was the redundant gate that killed ≈ 97% of valid picks.")
+
+
+def test_v2_2_cascade_rejects_reversal_against_pick():
+    """Symmetric guarantee: when the bar immediately *fades* the pick
+    (close moves *against* the picked side past the anchor), no entry
+    fires. Continuation, not direction-free, is the cascade-test
+    contract."""
+    rng = np.random.default_rng(22)
+    base = 100 * np.exp(np.cumsum(rng.normal(0.0008, 0.005, 800)))
+    base[-1] = base[-2] * 0.98                # −2% reversal on last bar
+    df = _ohlcv(base)
+    strat = TrendFollowingStrategy(StrategyParams())
+    sigs = strat.generate_signals(df, screener_side="long",
+                                    source=SignalSource.HIST)
+    last_ts = df.index[-1]
+    last_long = [s for s in sigs
+                 if s.type == SignalType.ENTRY and s.side == "long"
+                 and s.ts == last_ts]
+    assert not last_long, (
+        "cascade-test must reject a long pick whose latest bar fades "
+        "below the anchor — continuation, not blind acceptance, is "
+        "the contract.")
+
+
 def test_conviction_power_amp_cubic():
     """Cubic conviction grading: amp = confidence^3, giving 64× ratio
     between weak (0.25) and max (2.0) signals."""

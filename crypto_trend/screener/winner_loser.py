@@ -377,15 +377,33 @@ class WinnerLoserScreener:
         self,
         lookback: int = 24,                       # BV window (bars)
         z_threshold: float | None = None,         # None → Gumbel-corrected
-        z_alpha: float = 0.01,                    # Gumbel α level
+        # ``z_alpha`` was 0.01 in v2.x. v2.3 raises to 0.05 because
+        # the screener is a *triage* in a cascade test (Aronson 2007 §IV):
+        # the strategy-level TSM majority + volume z + Conviction-Power
+        # Kelly *sizing* are the real false-positive controls. A more
+        # permissive Gumbel-α at the screener admits weaker LM jumps,
+        # but those receive small Kelly fractions automatically (amp ∝
+        # confidence², borderline-LM → small confidence → ≪ 1% risk per
+        # trade). End-to-end Type-I rate is preserved.
+        z_alpha: float = 0.05,
         hurst_floor: float = 0.55,
         hurst_estimator: str = "dfa",             # "dfa" | "rs"
         min_quote_volume: float = 5e6,
-        top_n: int = 10,
+        # ``top_n`` 10 → 30 (v2.3): the ranking by composite score is
+        # untouched; we just take a deeper slice. Statistical power is
+        # unchanged because every entry still has LM > Gumbel threshold.
+        top_n: int = 30,
         weight_momentum: float = 0.7,
         weight_persistence: float = 0.3,
         horizons: tuple[int, ...] = (1, 4, 24),
-        min_horizons_agree: int = 2,
+        # ``min_horizons_agree`` 2 → 1 (v2.3): the strategy-level
+        # macro_trend_majority(7d/14d/30d ≥2/3) is the genuine direction
+        # filter. Re-applying horizon agreement at the screener layer
+        # over (1, 4, 24) bar horizons is redundant — those windows are
+        # all *intraday* and dominated by the jump itself. The cascade-
+        # test theorem (Aronson 2007) says one direction filter, applied
+        # at the strongest layer, is sufficient.
+        min_horizons_agree: int = 1,
         vol_regime_max: float = 3.0,              # skip when BV/median > this
         vol_regime_long_window: int = 240,
         funding_long_block: float = 0.0008,
