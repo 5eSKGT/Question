@@ -812,17 +812,41 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
       <td>1봉 이동 허용 폭 = band_mult × YZ_vol × close</td></tr>
   <tr><td><code>strategy.time_stop_bars</code></td><td>48</td>
       <td>이 기간 동안 진전 없으면 시간 스톱</td></tr>
-  <tr><td><code>cvar_alpha</code></td><td>0.05</td>
+  <tr><td><code>strategy.cvar_alpha</code></td><td>0.05</td>
       <td>Expected Shortfall 분위수</td></tr>
-  <tr><td><code>cvar_floor_pct</code></td><td>-0.08</td>
-      <td>한 포지션의 ES_5% 하한 (음수)</td></tr>
-  <tr><td><code>max_gross_leverage</code></td><td>3.0</td>
-      <td>총 명목 / 자기자본 상한</td></tr>
+  <tr><td><code>strategy.cvar_floor</code></td><td>-0.10</td>
+      <td>한 포지션의 ES_5% 하한 (음수, defense-in-depth)</td></tr>
+  <tr><td><code>strategy.risk_per_trade</code></td><td>0.01</td>
+      <td>한 트레이드 stop-out 시 잃을 자본 비율 — Kelly·Grossman-Zhou 도출</td></tr>
+  <tr><td><code>strategy.sizing_cap</code></td><td>2.0</td>
+      <td>Confidence 배수 적용 후 절대 사이즈 상한 (× equity)</td></tr>
+  <tr><td><code>strategy.leverage_cap</code></td><td>3.0</td>
+      <td>최대 레버리지 — Chandelier 청산 거리에서 자동 산정 후 cap</td></tr>
+  <tr><td><code>strategy.lm_threshold</code></td><td>4.0</td>
+      <td>Confidence 배수의 기준 LM 통계량</td></tr>
+  <tr><td><code>strategy.direct_entry_lm</code></td><td>5.0</td>
+      <td>이 임계 이상 점프는 Donchian 없이 즉시 진입</td></tr>
+  <tr><td><code>SETTINGS.live_oos_bars</code></td><td>720</td>
+      <td>라이브 OOS 평가 윈도우 (Bailey-LdP PSR 분산 임계)</td></tr>
+  <tr><td><code>SETTINGS.backtest_bars</code></td><td>8760</td>
+      <td>백테스트 다운로드 봉 수 (Lo 2002 + LdP 통계적 최소)</td></tr>
+  <tr><td><code>walk_forward_train_days</code></td><td>30</td>
+      <td>Walk-forward warmup (각 윈도우 indicator 안정화)</td></tr>
   <tr><td><code>walk_forward_test_days</code></td><td>7</td>
-      <td>OOS 평가 윈도우 길이</td></tr>
+      <td>Walk-forward OOS 평가 세그먼트</td></tr>
   <tr><td><code>recalibration_max_attempts</code></td><td>3</td>
-      <td>이 횟수 안에 통과 못하면 HALT</td></tr>
+      <td>이 횟수 안에 통과 못하면 HALT (전 포지션 즉시 청산)</td></tr>
+  <tr><td><code>engine.pick_ttl_cycles</code></td><td>24</td>
+      <td>스크리너 픽이 active 로 유지되는 사이클 수 (= 24h)</td></tr>
+  <tr><td><code>engine.oos_warmup_cycles</code></td><td>5</td>
+      <td>이 사이클 동안은 OOS 실패에도 HALT 유예 (cold-start 보호)</td></tr>
 </table>
+
+<p style="color:var(--sub);font-size:11px;margin-top:8px">
+  <i>(deprecated: <code>SETTINGS.cvar_floor_pct</code>, <code>SETTINGS.max_gross_leverage</code>
+  는 .env 호환을 위해 남아있지만 어디에서도 읽지 않습니다 — 전략은 모두
+  <code>StrategyParams</code> 의 commit 된 값을 사용합니다.)</i>
+</p>
 
 <!-- ────────────────────────────────────────────────────────────────── -->
 <h2>실거래 환경에서의 유효성 — 30-시드 백테스트 결과</h2>

@@ -230,23 +230,50 @@ class AlphaPulseWindow(QMainWindow):
         v.addLayout(creds_row)
         self._refresh_creds_status()
 
-        # Strategy params
-        v.addWidget(self._caption("전략 파라미터"))
-        self.lookback_spin = self._spin_int("스크리너 lookback (bars)", 10, 200, 24)
-        self.z_spin = self._spin_float("robust-z 임계", 1.0, 6.0, 2.5, 0.1)
-        self.cvar_spin = self._spin_float("CVaR 하한 (음수)", -0.30, -0.01,
-                                          SETTINGS.cvar_floor_pct, 0.005)
-        self.lev_spin = self._spin_float("최대 레버리지", 1.0, 10.0,
-                                         SETTINGS.max_gross_leverage, 0.5)
+        # ---- operational settings (per-deployment knobs) -------- #
+        v.addWidget(self._caption("운영 설정"))
         self.equity_spin = self._spin_float("페이퍼 시작자본 USDT", 100.0, 1_000_000.0,
                                             SETTINGS.base_equity_usdt, 100.0)
-        for w in (self.lookback_spin, self.z_spin, self.cvar_spin,
-                   self.lev_spin, self.equity_spin):
-            v.addWidget(w)
-
-        # Cycle period
+        v.addWidget(self.equity_spin)
         self.period_spin = self._spin_int("사이클 주기 (초)", 60, 86400, 3600)
         v.addWidget(self.period_spin)
+
+        # ---- read-only strategy summary ----------------------------- #
+        # Strategy parameters are committed in StrategyParams() so that
+        # live and backtest use the same code path with the same values.
+        # Exposing them as editable spinboxes here would break that
+        # invariant: changing CVaR / leverage in the GUI used to write
+        # to SETTINGS, but the strategy reads from StrategyParams (NOT
+        # SETTINGS), so the user input had no effect — a silent leak.
+        # We now show the canonical values read-only and link the ⓘ doc
+        # for the rationale.
+        from ..strategy.trend_following import StrategyParams
+        sp = StrategyParams()
+        strat_card = QLabel(
+            f"<b>현재 전략 (read-only)</b><br>"
+            f"<span style='color:{SUBTEXT}'>"
+            f"OOS 자가보정이 indicator 파라미터를 자동 조정합니다. 사이징 / "
+            f"리스크 파라미터는 commit 된 값으로 라이브와 백테스트가 동일하게 "
+            f"사용합니다.</span><br><br>"
+            f"<b>지표</b> · breakout = {sp.breakout_n}, "
+            f"ATR({sp.atr_n}) × {sp.chandelier_mult:.1f}<br>"
+            f"<b>점프 검출</b> · LM 임계 {sp.lm_threshold:.1f}, "
+            f"direct entry ≥ {sp.direct_entry_lm:.1f}σ<br>"
+            f"<b>리스크</b> · CVaR α={sp.cvar_alpha:.2f}, "
+            f"floor={sp.cvar_floor:.2f}<br>"
+            f"<b>사이징</b> · risk-per-trade={sp.risk_per_trade:.2%} "
+            f"(Kelly·Grossman-Zhou)<br>"
+            f"<b>레버리지</b> · 최대 {sp.leverage_cap:.0f}× "
+            f"(Chandelier 청산거리에서 자동 산정)<br>"
+            f"<b>OOS</b> · 평가 윈도우 {SETTINGS.live_oos_bars} bars "
+            f"({SETTINGS.live_oos_bars // 24}일), warmup 5 cycles")
+        strat_card.setWordWrap(True)
+        strat_card.setTextFormat(Qt.RichText)
+        strat_card.setStyleSheet(
+            f"background:#f3f6fa; border:1px solid {BORDER}; "
+            f"border-radius:8px; padding:8px; font-size:11px; "
+            f"color:{TEXT};")
+        v.addWidget(strat_card)
 
         v.addStretch(1)
 
@@ -362,11 +389,17 @@ class AlphaPulseWindow(QMainWindow):
         self.portfolio.mode = new_mode.value
 
     def _gather_settings(self) -> bool:
-        """Push GUI values into config.SETTINGS. Returns False if invalid.
+        """Push *operational* GUI values into config.SETTINGS.
 
-        Credentials are *only* loaded from the OS keyring, never from any
-        widget on the main window.  They live in ``SETTINGS`` for the
-        duration of an engine run and are wiped on stop.
+        Strategy parameters (CVaR, leverage cap, lookback, z-threshold,
+        ...) are NOT taken from the GUI — they are committed to
+        ``StrategyParams()`` so the live engine and the backtest run
+        with identical inputs. Only the per-deployment operational
+        knobs are written here: trading mode, API credentials, paper
+        starting capital, cycle period.
+
+        Returns False if validation fails (e.g. missing API keys for
+        live mode).
         """
         mode = TradingMode.LIVE if self.mode_combo.currentIndex() == 1 else TradingMode.PAPER
         creds = self.credentials_store.load()
@@ -381,11 +414,8 @@ class AlphaPulseWindow(QMainWindow):
             api_key=creds.api_key,
             api_secret=creds.api_secret,
             api_passphrase=creds.api_passphrase,
-            cvar_floor_pct=float(self._val(self.cvar_spin)),
-            max_gross_leverage=float(self._val(self.lev_spin)),
             base_equity_usdt=float(self._val(self.equity_spin)),
         )
-        # We do NOT keep credentials in the local Credentials object after this.
         creds.wipe()
         self.portfolio.mode = mode.value
         if self.portfolio.equity_usdt <= 0:
