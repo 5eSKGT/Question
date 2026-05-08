@@ -157,7 +157,11 @@ def multi_horizon_alignment(returns: np.ndarray, sign: int,
 
 
 def hurst_rs(series: np.ndarray, min_chunk: int = 8) -> float:
-    """Rescaled-range Hurst estimate (Mandelbrot 1969).  0.5 = random walk."""
+    """Rescaled-range Hurst estimate (Mandelbrot 1969).  0.5 = random walk.
+
+    Kept as a fallback. ``hurst_dfa`` is preferred; R/S has substantially
+    higher finite-sample variance.
+    """
     n = series.size
     if n < min_chunk * 4:
         return 0.5
@@ -184,6 +188,139 @@ def hurst_rs(series: np.ndarray, min_chunk: int = 8) -> float:
     log_rs = np.log(rs_vals)
     slope, _ = np.polyfit(log_c, log_rs, 1)
     return float(np.clip(slope, 0.0, 1.0))
+
+
+def hurst_dfa(returns: np.ndarray) -> float:
+    """Detrended Fluctuation Analysis estimator of the Hurst exponent.
+
+    Reference: Peng, Buldyrev, Havlin, Simons, Stanley & Goldberger (1994),
+    "Mosaic organization of DNA nucleotides", Physical Review E 49(2),
+    1685-1689 — and its application to financial time series e.g.
+    Mantegna & Stanley (2000), *Introduction to Econophysics*.
+
+    DFA has a substantially smaller finite-sample variance than R/S
+    because it removes the local trend within each segment before
+    computing the residual fluctuation. Returns slope of log(F(n)) vs
+    log(n) where F(n) is the segment-RMS of the detrended cumulative sum.
+    """
+    n = returns.size
+    if n < 32:
+        return 0.5
+    Y = np.cumsum(returns - returns.mean())
+
+    # Geometric grid of window sizes from 4 to N/4
+    grid: list[int] = []
+    sz = 4
+    while sz <= n // 4:
+        grid.append(sz)
+        sz = max(sz + 1, int(sz * 1.5))
+    if len(grid) < 3:
+        return 0.5
+
+    fluctuations: list[float] = []
+    valid: list[int] = []
+    for s in grid:
+        n_segs = n // s
+        if n_segs < 2:
+            continue
+        rms_per_seg: list[float] = []
+        x = np.arange(s)
+        for k in range(n_segs):
+            y_seg = Y[k * s:(k + 1) * s]
+            slope, intercept = np.polyfit(x, y_seg, 1)
+            resid = y_seg - (slope * x + intercept)
+            rms_per_seg.append(float(np.sqrt(np.mean(resid * resid))))
+        if rms_per_seg:
+            fluctuations.append(float(np.mean(rms_per_seg)))
+            valid.append(s)
+
+    if len(fluctuations) < 3:
+        return 0.5
+    slope, _ = np.polyfit(np.log(valid), np.log(fluctuations), 1)
+    return float(np.clip(slope, 0.0, 1.0))
+
+
+def lee_mykland_gumbel_threshold(window: int, alpha: float = 0.01) -> float:
+    """Lee–Mykland (2008) Gumbel-corrected critical value.
+
+    Under H0 of no jump in any of ``window`` test points, ``max|L|`` has a
+    limiting Gumbel distribution. The α-level critical value is::
+
+        β_n = √(2 ln n) − (ln π + ln ln n) / (2 √(2 ln n))
+        C_n = 1 / √(2 ln n)
+        c_n = β_n + s_α · C_n         where  s_α = −ln(−ln(1−α))
+
+    Using this threshold (instead of a flat Z-quantile) controls the
+    *family-wise* false-alarm rate when many bars are scanned, which is
+    the right correction for the multiple-comparison structure of
+    bar-by-bar testing.
+    """
+    if window < 4:
+        return 5.0
+    L = np.log(window)
+    sqrt_2L = np.sqrt(2.0 * L)
+    beta_n = sqrt_2L - (np.log(np.pi) + np.log(L)) / (2.0 * sqrt_2L)
+    C_n = 1.0 / sqrt_2L
+    s_alpha = -np.log(-np.log(1.0 - alpha))
+    return float(beta_n + s_alpha * C_n)
+
+
+def vol_regime_score(returns: np.ndarray, short_window: int = 24,
+                      long_window: int = 240) -> float:
+    """Ratio of recent BV to historical median BV.
+
+    Values near 1 mean current diffusion volatility is at its typical
+    level; values >> 3 indicate the market is in a vol-explosion regime
+    where Donchian breakouts become extremely noisy and trend-following
+    edges erode. The strategy uses this as a soft skip signal — not as a
+    hard reject of every screener pick, but as a gate that narrows the
+    survivor set during chaotic periods.
+
+    Returns 1.0 when not enough data is available so the filter is
+    permissive by default.
+    """
+    if returns.size < long_window:
+        return 1.0
+    short_bv = bipower_variation(returns[-short_window:])
+    if short_bv <= 0:
+        return 1.0
+    historic: list[float] = []
+    step = max(short_window // 2, 1)
+    for end in range(short_window, long_window, step):
+        seg = returns[-(end + short_window):-end]
+        if seg.size < short_window:
+            continue
+        bv = bipower_variation(seg)
+        if bv > 0:
+            historic.append(bv)
+    if not historic:
+        return 1.0
+    bv_med = float(np.median(historic))
+    if bv_med <= 0:
+        return 1.0
+    return float(short_bv / bv_med)
+
+
+def funding_pressure_ok(side: str, funding_rate: float | None,
+                         long_block: float = 0.0008,
+                         short_block: float = -0.0008) -> bool:
+    """Reject overcrowded directions on Bitget USDT-perps.
+
+    Bitget settles funding every 8 hours. A funding rate of +0.08% per
+    settlement (= long_block default) means longs are paying shorts
+    heavily, signalling overcrowded long positioning. Entering on the
+    same side amounts to standing in front of mean reversion in
+    funding. This filter is permissive when the broker did not provide
+    funding data (returns True so the screener does not get blocked
+    just because we lack the signal).
+    """
+    if funding_rate is None:
+        return True
+    if side == "long" and funding_rate >= long_block:
+        return False
+    if side == "short" and funding_rate <= short_block:
+        return False
+    return True
 
 
 def realized_vol(returns: np.ndarray) -> float:
@@ -239,29 +376,56 @@ class WinnerLoserScreener:
     def __init__(
         self,
         lookback: int = 24,                       # BV window (bars)
-        z_threshold: float = 2.5,                 # |L_t| floor
+        z_threshold: float | None = None,         # None → Gumbel-corrected
+        z_alpha: float = 0.01,                    # Gumbel α level
         hurst_floor: float = 0.55,
+        hurst_estimator: str = "dfa",             # "dfa" | "rs"
         min_quote_volume: float = 5e6,
         top_n: int = 10,
         weight_momentum: float = 0.7,
         weight_persistence: float = 0.3,
         horizons: tuple[int, ...] = (1, 4, 24),
         min_horizons_agree: int = 2,
+        vol_regime_max: float = 3.0,              # skip when BV/median > this
+        vol_regime_long_window: int = 240,
+        funding_long_block: float = 0.0008,
+        funding_short_block: float = -0.0008,
     ) -> None:
         self.lookback = lookback
-        self.z_threshold = z_threshold
+        # If user did not specify a flat threshold, use the academically-
+        # grounded Gumbel critical value at α=z_alpha.
+        self.z_threshold = (z_threshold if z_threshold is not None
+                            else lee_mykland_gumbel_threshold(lookback, z_alpha))
+        self.z_alpha = z_alpha
         self.hurst_floor = hurst_floor
+        self.hurst_estimator = hurst_estimator
         self.min_quote_volume = min_quote_volume
         self.top_n = top_n
         self.w_mom = weight_momentum
         self.w_pers = weight_persistence
         self.horizons = horizons
         self.min_horizons_agree = min_horizons_agree
+        self.vol_regime_max = vol_regime_max
+        self.vol_regime_long_window = vol_regime_long_window
+        self.funding_long_block = funding_long_block
+        self.funding_short_block = funding_short_block
 
     # ------------------------------------------------------------------ #
-    def score(self, candles: pd.DataFrame, quote_volume: float
+    def _hurst(self, rets: np.ndarray) -> float:
+        if self.hurst_estimator == "dfa":
+            return hurst_dfa(rets[-min(rets.size, 256):])
+        return hurst_rs(rets[-min(rets.size, 256):])
+
+    # ------------------------------------------------------------------ #
+    def score(self, candles: pd.DataFrame, quote_volume: float,
+              funding_rate: float | None = None
               ) -> tuple[float, float, float, str, int] | None:
-        """Score one symbol. Returns (composite, L, H, side, agree) or None."""
+        """Score one symbol. Returns (composite, L, H, side, agree) or None.
+
+        ``funding_rate`` is the per-settlement Bitget funding rate (e.g.
+        0.0008 = +0.08% per 8h). Pass ``None`` to disable the funding
+        filter for tests / synthetic data.
+        """
         if (candles is None or candles.empty
                 or len(candles) < self.lookback + 4):
             return None
@@ -270,7 +434,9 @@ class WinnerLoserScreener:
             return None
         rets = np.diff(np.log(closes))
 
-        # 1. Lee-Mykland jump statistic on the latest bar
+        # 1. Lee-Mykland jump statistic on the latest bar — Gumbel-corrected
+        #    threshold by default, so the family-wise false alarm rate
+        #    across the 100+ symbol universe is bounded by z_alpha.
         L = lee_mykland_statistic(rets, window=self.lookback)
         if math.isnan(L) or abs(L) < self.z_threshold:
             return None
@@ -281,26 +447,39 @@ class WinnerLoserScreener:
         if agree < self.min_horizons_agree:
             return None
 
-        # 3. Liquidity floor (cheap test, but check after LM so volume isn't
-        #    re-evaluated for a trivially-failing candidate)
+        # 3. Volatility regime — skip when current BV >> historical median
+        regime = vol_regime_score(rets,
+                                   short_window=self.lookback,
+                                   long_window=self.vol_regime_long_window)
+        if regime > self.vol_regime_max:
+            return None
+
+        # 4. Liquidity floor
         if quote_volume < self.min_quote_volume:
             return None
 
-        # 4. Persistence — Hurst R/S over a longer window, computed last so
-        #    its estimate isn't dominated by the jump bar itself
-        h = hurst_rs(rets[-min(rets.size, 256):])
+        # 5. Funding pressure — reject the side that is paying funding
+        side = "long" if side_sign > 0 else "short"
+        if not funding_pressure_ok(side, funding_rate,
+                                    self.funding_long_block,
+                                    self.funding_short_block):
+            return None
+
+        # 6. Persistence — DFA by default (lower variance than R/S)
+        h = self._hurst(rets)
         if h < self.hurst_floor:
             return None
 
-        # Composite: weighted sum of jump strength and persistence agreement,
-        # boosted by an extra term that rewards multi-horizon support so two
-        # candidates with similar L break tie on the cleaner trend.
+        # Composite: weighted sum of jump strength, persistence and
+        # multi-horizon support; the regime score gently penalises
+        # near-explosion candidates so cleaner trends win the rank.
+        regime_bonus = max(0.0, (1.5 - regime))     # 0 at regime≥1.5, +1 at ≤0.5
         composite = (
             self.w_mom * L
             + self.w_pers * (h - 0.5) * 4.0 * side_sign
             + 0.25 * agree * side_sign
+            + 0.25 * regime_bonus * side_sign
         )
-        side = "long" if side_sign > 0 else "short"
         return float(composite), float(L), float(h), side, int(agree)
 
     # ------------------------------------------------------------------ #
@@ -309,16 +488,18 @@ class WinnerLoserScreener:
         symbols: Iterable[str],
         ohlcv_provider,                            # callable: symbol -> DataFrame
         quote_volume_provider,                     # callable: symbol -> float
+        funding_rate_provider=None,                # callable: symbol -> float | None
     ) -> list[ScreenResult]:
         results: list[ScreenResult] = []
         for sym in symbols:
             try:
                 candles = ohlcv_provider(sym)
                 qv = quote_volume_provider(sym)
+                fr = funding_rate_provider(sym) if funding_rate_provider else None
             except Exception as e:                        # noqa: BLE001
                 log.debug(f"screener: {sym} skipped: {e}")
                 continue
-            scored = self.score(candles, qv)
+            scored = self.score(candles, qv, funding_rate=fr)
             if scored is None:
                 continue
             composite, L, h, side, agree = scored

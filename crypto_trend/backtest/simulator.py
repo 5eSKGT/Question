@@ -1,0 +1,244 @@
+"""Event-driven strategy simulator with realistic costs.
+
+The previous version invoked ``strategy.generate_signals`` on a *slice*
+of every symbol's history at every bar, which is O(N · T²) and made
+even small backtests intractable. This rewrite precomputes all
+strategy indicators once per symbol per backtest in O(N · T), then
+iterates through bars in O(N · T) for the entry/exit machinery — total
+complexity O(N · T) instead of O(N · T²).
+
+Modelled costs:
+  * taker_fee   — Bitget USDT-perp default 6 bps per fill
+  * slippage    — additional 1 bp on entry and exit (configurable)
+  * one position per symbol — matches the production engine
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import numpy as np
+import pandas as pd
+
+from ..screener.winner_loser import WinnerLoserScreener
+from ..strategy.trend_following import (StrategyParams, TrendFollowingStrategy,
+                                          atr, donchian, yang_zhang_vol)
+
+
+@dataclass
+class Trade:
+    symbol: str
+    side: str
+    entry_ts: pd.Timestamp
+    exit_ts: pd.Timestamp
+    entry_price: float
+    exit_price: float
+    size_fraction: float
+    pnl: float
+    bars_held: int
+    exit_reason: str
+
+
+@dataclass
+class _SymbolPrecomp:
+    """Precomputed indicator arrays for one symbol."""
+    closes: np.ndarray
+    log_rets: np.ndarray
+    atr: np.ndarray
+    yz: np.ndarray
+    donchian_hi: np.ndarray         # rolling max of high over breakout_n bars
+    donchian_lo: np.ndarray
+
+
+def _precompute(df: pd.DataFrame, p: StrategyParams) -> _SymbolPrecomp:
+    closes = df["close"].to_numpy(dtype=float)
+    log_p = np.log(closes)
+    rets = np.diff(log_p, prepend=log_p[0])
+    a = atr(df, p.atr_n).to_numpy(dtype=float)
+    yz = yang_zhang_vol(df, p.yz_n).to_numpy(dtype=float)
+    hi, lo = donchian(df, p.breakout_n)
+    return _SymbolPrecomp(
+        closes=closes,
+        log_rets=rets,
+        atr=np.nan_to_num(a, nan=0.0),
+        yz=np.nan_to_num(yz, nan=0.0),
+        donchian_hi=np.nan_to_num(hi.to_numpy(dtype=float), nan=np.inf),
+        donchian_lo=np.nan_to_num(lo.to_numpy(dtype=float), nan=-np.inf),
+    )
+
+
+@dataclass
+class StrategySimulator:
+    strategy: TrendFollowingStrategy = field(default_factory=TrendFollowingStrategy)
+    screener: WinnerLoserScreener | None = None
+    taker_fee: float = 6e-4
+    slippage_bps: float = 1.0
+    bars_per_year: float = 365 * 24
+    rescreen_every: int = 24
+
+    # ------------------------------------------------------------------ #
+    def run(self, candles: dict[str, pd.DataFrame],
+            warmup_bars: int = 256,
+            screener_top_n: int | None = None) -> dict:
+        if not candles:
+            return {"bar_returns": np.array([]), "trades": [], "exposure": 0.0}
+
+        idx = sorted(set.intersection(*(set(df.index) for df in candles.values())))
+        n_bars = len(idx)
+        if n_bars <= warmup_bars + 4:
+            return {"bar_returns": np.array([]), "trades": [], "exposure": 0.0}
+
+        symbols = list(candles.keys())
+        # Re-index every DataFrame to the common index for safe positional access
+        candles_aligned = {s: candles[s].reindex(idx) for s in symbols}
+
+        # ---- pre-compute indicators once per symbol -------------------- #
+        p = self.strategy.p
+        pre: dict[str, _SymbolPrecomp] = {
+            s: _precompute(candles_aligned[s], p) for s in symbols
+        }
+
+        screener = self.screener or WinnerLoserScreener(
+            lookback=24, hurst_floor=0.0, min_quote_volume=0.0,
+            min_horizons_agree=2, top_n=screener_top_n or 5)
+
+        positions: dict[str, dict] = {}
+        trades: list[Trade] = []
+        bar_pnl = np.zeros(n_bars, dtype=float)
+        bars_with_position = 0
+        active_picks: dict[str, str] = {}        # symbol -> screener side
+
+        cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
+
+        for t in range(warmup_bars, n_bars):
+            ts = idx[t]
+
+            # ---- rescreen ---------------------------------------------- #
+            if (t - warmup_bars) % self.rescreen_every == 0:
+                # Build a slice provider that doesn't materialise new frames
+                def _ohlcv_provider(s, end=t):
+                    return candles_aligned[s].iloc[: end + 1]
+                results = screener.run(
+                    symbols,
+                    ohlcv_provider=_ohlcv_provider,
+                    quote_volume_provider=lambda s: 1e12,
+                )
+                active_picks = {r.symbol: r.side for r in results}
+
+            # ---- iterate symbols (cheap: only O(1) per symbol now) ----- #
+            for sym in symbols:
+                pc = pre[sym]
+                close = pc.closes[t]
+                if close <= 0 or np.isnan(close):
+                    continue
+                pos = positions.get(sym)
+                a_i = pc.atr[t]
+                yz_i = pc.yz[t]
+                band = p.band_mult * yz_i * close
+
+                if pos is not None:
+                    side_sign = 1.0 if pos["side"] == "long" else -1.0
+                    prev_close = pc.closes[t - 1]
+                    if prev_close > 0 and not np.isnan(prev_close):
+                        bar_pnl[t] += side_sign * (np.log(close / prev_close)
+                                                     * pos["size"])
+
+                    # ---- exit decision -------------------------------- #
+                    if pos["side"] == "long":
+                        pos["peak"] = max(pos["peak"], close)
+                        chand = pos["peak"] - p.chandelier_mult * a_i
+                        chand_hit = close < chand
+                    else:
+                        pos["trough"] = min(pos["trough"], close)
+                        chand = pos["trough"] + p.chandelier_mult * a_i
+                        chand_hit = close > chand
+
+                    time_stop = (t - pos["entry_idx"]) >= p.time_stop_bars
+
+                    win = pc.log_rets[max(0, t - 64): t] * side_sign
+                    cvar_breach = (win.size > 0
+                                    and np.quantile(win, p.cvar_alpha) < p.cvar_floor)
+
+                    if chand_hit or time_stop or cvar_breach:
+                        reason = ("chandelier" if chand_hit
+                                   else "time_stop" if time_stop
+                                   else "cvar_breach")
+                        exit_px = close * (1.0 - self.slippage_bps * 1e-4 * side_sign)
+                        bar_pnl[t] -= pos["size"] * cost_per_fill
+                        pnl = (np.log(exit_px / pos["entry_px"]) * side_sign
+                                * pos["size"] - 2.0 * pos["size"] * cost_per_fill)
+                        trades.append(Trade(
+                            symbol=sym, side=pos["side"],
+                            entry_ts=idx[pos["entry_idx"]], exit_ts=ts,
+                            entry_price=float(pos["entry_px"]),
+                            exit_price=float(exit_px),
+                            size_fraction=float(pos["size"]),
+                            pnl=float(pnl),
+                            bars_held=t - pos["entry_idx"],
+                            exit_reason=reason,
+                        ))
+                        positions.pop(sym)
+                        continue
+
+                # ---- entry decision -------------------------------------- #
+                if pos is not None:
+                    continue
+                if sym not in active_picks:
+                    continue
+                want = active_picks[sym]
+                hi_prev = pc.donchian_hi[t - 1]
+                lo_prev = pc.donchian_lo[t - 1]
+                broke_up = close > hi_prev
+                broke_dn = close < lo_prev
+                inside_band = band == 0 or abs(close - pc.closes[t - 1]) <= band
+
+                fire_long = want == "long" and broke_up and inside_band
+                fire_short = want == "short" and broke_dn and inside_band
+                if not (fire_long or fire_short):
+                    continue
+
+                # CVaR-bounded sizing on the most recent 256 returns
+                from ..risk.cvar import max_size_under_cvar
+                sample = pc.log_rets[max(0, t - 256): t]
+                size = max_size_under_cvar(sample, p.cvar_floor,
+                                             p.cvar_alpha,
+                                             leverage_cap=p.leverage_cap)
+                if size <= 0:
+                    continue
+
+                side = "long" if fire_long else "short"
+                side_sign = 1.0 if fire_long else -1.0
+                entry_px = close * (1.0 + self.slippage_bps * 1e-4 * side_sign)
+                bar_pnl[t] -= size * cost_per_fill
+                positions[sym] = dict(
+                    side=side, entry_idx=t, entry_px=float(entry_px),
+                    size=float(size),
+                    peak=float(close),
+                    trough=float(close),
+                )
+
+            if positions:
+                bars_with_position += 1
+
+        # Mark out anything still open
+        for sym, pos in list(positions.items()):
+            close = pre[sym].closes[-1]
+            side_sign = 1.0 if pos["side"] == "long" else -1.0
+            pnl = (np.log(close / pos["entry_px"]) * side_sign * pos["size"]
+                    - 2.0 * pos["size"] * cost_per_fill)
+            trades.append(Trade(
+                symbol=sym, side=pos["side"],
+                entry_ts=idx[pos["entry_idx"]], exit_ts=idx[-1],
+                entry_price=float(pos["entry_px"]),
+                exit_price=float(close),
+                size_fraction=float(pos["size"]),
+                pnl=float(pnl),
+                bars_held=n_bars - 1 - pos["entry_idx"],
+                exit_reason="mark_out",
+            ))
+
+        exposure = bars_with_position / max(n_bars - warmup_bars, 1)
+        return {
+            "bar_returns": bar_pnl[warmup_bars:],
+            "trades": trades,
+            "exposure": float(exposure),
+        }

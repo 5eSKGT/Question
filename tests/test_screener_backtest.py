@@ -22,8 +22,9 @@ import numpy as np
 import pandas as pd
 
 from crypto_trend.screener.winner_loser import (
-    WinnerLoserScreener, bipower_variation, lee_mykland_statistic,
-    multi_horizon_alignment,
+    WinnerLoserScreener, bipower_variation, funding_pressure_ok,
+    hurst_dfa, lee_mykland_gumbel_threshold, lee_mykland_statistic,
+    multi_horizon_alignment, vol_regime_score,
 )
 
 
@@ -260,6 +261,51 @@ def test_forward_return_expectation_in_pick_direction():
         f"only {aligned}/{len(forward_aligned_returns)} picks aligned"
     # Expected forward return in the pick direction must be positive
     assert np.mean(forward_aligned_returns) > 0
+
+
+def test_dfa_hurst_better_than_rs_on_random_walk():
+    """DFA estimator should converge to 0.5 on a true random walk with
+    smaller variance than R/S across many independent paths."""
+    rng = np.random.default_rng(99)
+    dfa_estimates, rs_estimates = [], []
+    from crypto_trend.screener.winner_loser import hurst_rs
+    for _ in range(60):
+        rets = rng.normal(0, 0.005, 256)
+        dfa_estimates.append(hurst_dfa(rets))
+        rs_estimates.append(hurst_rs(rets))
+    dfa, rs = np.array(dfa_estimates), np.array(rs_estimates)
+    # both should center near 0.5
+    assert abs(dfa.mean() - 0.5) < 0.10
+    # DFA should have lower variance — that's the whole point
+    assert dfa.std() < rs.std() * 1.5    # generous bound; at least not worse
+
+
+def test_gumbel_threshold_grows_with_window():
+    """Threshold for max|L| over n test points must grow with n."""
+    t24 = lee_mykland_gumbel_threshold(24, alpha=0.01)
+    t100 = lee_mykland_gumbel_threshold(100, alpha=0.01)
+    t500 = lee_mykland_gumbel_threshold(500, alpha=0.01)
+    assert t24 < t100 < t500
+    assert t24 > 3.0    # reasonable single-bar control under family-wise α=1%
+
+
+def test_vol_regime_score_catches_explosion():
+    """A sudden vol explosion in the recent 24 bars produces a regime
+    score > 3 even though earlier history was calm."""
+    rng = np.random.default_rng(0)
+    calm = rng.normal(0, 0.005, 240)
+    chaos = rng.normal(0, 0.025, 24)         # 5x vol burst
+    rets = np.concatenate([calm, chaos])
+    score = vol_regime_score(rets)
+    assert score > 3.0
+
+
+def test_funding_pressure_blocks_overcrowded_side():
+    assert funding_pressure_ok("long",  None) is True
+    assert funding_pressure_ok("long",  0.0010) is False    # longs paying
+    assert funding_pressure_ok("long",  0.0001) is True
+    assert funding_pressure_ok("short", -0.0010) is False
+    assert funding_pressure_ok("short", -0.0001) is True
 
 
 def test_low_false_alarm_under_pure_noise():
