@@ -34,12 +34,13 @@ def test_chart_contains_one_marker_per_source():
         _sig(SignalSource.OOS, idx[2]),
     ]
     fig = build_signal_chart("X/USDT:USDT", candles, sigs)
-    # 1 candlestick + 3 marker traces (+ 1 OOS halo) = at least 4 marker scatters
-    marker_traces = [t for t in fig.data if t.type == "scatter"]
+    # Scattergl (WebGL) is now used for marker traces — its plotly
+    # type is "scattergl", not "scatter".
+    marker_traces = [t for t in fig.data
+                      if t.type in ("scatter", "scattergl")]
     assert len(marker_traces) >= 3
-    # all "long entry" marker traces should use triangle-up + same green
     long_entry = [t for t in marker_traces
-                  if t.marker.symbol == "triangle-up"]
+                  if getattr(t.marker, "symbol", None) == "triangle-up"]
     assert long_entry, "long-entry marker trace missing"
     colors = {t.marker.color for t in long_entry}
     assert colors == {SIGNAL_STYLE[("long", "entry")]["color"]}

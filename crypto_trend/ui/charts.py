@@ -43,7 +43,13 @@ SOURCE_LABEL = {
 
 # --------------------------------------------------------------------------- #
 def _trace_for_signals(signals: Iterable[Signal], source: SignalSource) -> list[go.Scatter]:
-    """Build one trace per (side, type) so legend toggles are intuitive."""
+    """Build one trace per (side, type) so legend toggles are intuitive.
+
+    Uses ``Scattergl`` (WebGL) instead of ``Scatter`` so zoom/pan stays
+    smooth even when many markers accumulate over a long backtest. The
+    SIGNAL_STYLE invariant still holds — Scattergl honours the same
+    ``symbol`` / ``color`` / ``size`` parameters.
+    """
     buckets: dict[tuple[str, str], list[Signal]] = {}
     for s in signals:
         if s.source != source:
@@ -53,7 +59,7 @@ def _trace_for_signals(signals: Iterable[Signal], source: SignalSource) -> list[
     traces: list[go.Scatter] = []
     for (side, typ), items in buckets.items():
         style = SIGNAL_STYLE[(side, typ)]
-        traces.append(go.Scatter(
+        traces.append(go.Scattergl(
             x=[s.ts for s in items],
             y=[s.price for s in items],
             mode="markers",
@@ -65,8 +71,6 @@ def _trace_for_signals(signals: Iterable[Signal], source: SignalSource) -> list[
                 color=style["color"],
                 size=style["size"],
                 line=dict(width=1.4, color="#222"),
-                # OOS group emphasised with a halo so user spots it instantly
-                opacity=1.0 if source != SignalSource.OOS else 1.0,
             ),
             hovertemplate=(
                 f"<b>{SOURCE_LABEL[source]}</b><br>"
@@ -75,10 +79,10 @@ def _trace_for_signals(signals: Iterable[Signal], source: SignalSource) -> list[
                 f"price=%{{y:.4f}}<extra></extra>"
             ),
         ))
-        # Special-effect: OOS gets an outlined ring for visibility *without*
-        # changing the inner marker — keeps style invariant across A/B/C.
+        # OOS halo — stays as a separate Scattergl trace so the inner
+        # marker style remains invariant across A/B/C.
         if source == SignalSource.OOS:
-            traces.append(go.Scatter(
+            traces.append(go.Scattergl(
                 x=[s.ts for s in items],
                 y=[s.price for s in items],
                 mode="markers",
@@ -121,13 +125,25 @@ def build_signal_chart(symbol: str, candles: pd.DataFrame,
         template="plotly_white",
         paper_bgcolor="#ffffff",
         plot_bgcolor="#fafbfc",
-        margin=dict(l=20, r=20, t=40, b=20),
-        title=dict(text=f"📈 {symbol} · A/B/C 신호 일관 랜더링",
-                   font=dict(size=16, color="#333")),
-        xaxis=dict(rangeslider=dict(visible=False), gridcolor="#eef0f2"),
-        yaxis=dict(gridcolor="#eef0f2"),
+        margin=dict(l=20, r=20, t=24, b=20),
+        # Title kept minimal — the chart panel header already says
+        # "📈 신호 차트", so repeating "A/B/C 일관 랜더링" here was
+        # redundant clutter (and pushed the candle area down).
+        title=dict(text=f"<b>{symbol}</b>",
+                   font=dict(size=14, color="#333"),
+                   x=0.01, xanchor="left"),
+        xaxis=dict(rangeslider=dict(visible=False),
+                    gridcolor="#eef0f2",
+                    showspikes=False),                       # spike crosshair off → snappier hover
+        yaxis=dict(gridcolor="#eef0f2", showspikes=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                    xanchor="right", x=1, bgcolor="rgba(255,255,255,0.7)"),
+                    xanchor="right", x=1,
+                    bgcolor="rgba(255,255,255,0.7)"),
         height=560,
+        # Disable transitions so zoom/pan/select redraws are instant
+        # rather than animating through interpolated frames.
+        transition={"duration": 0},
+        uirevision="signal-chart",                            # preserve zoom on data refresh
+        dragmode="pan",
     )
     return fig

@@ -352,9 +352,12 @@ class BacktestDialog(QDialog):
             f"&nbsp;&nbsp;Time stop = {sp.time_stop_bars} bars<br>"
             f"<b>리스크 / 사이징 (committed)</b><br>"
             f"&nbsp;&nbsp;CVaR α = {sp.cvar_alpha:.2f}, floor = {sp.cvar_floor:.2f}<br>"
-            f"&nbsp;&nbsp;Vol target = {sp.target_annual_vol:.2f}<br>"
-            f"&nbsp;&nbsp;Kelly safety = {sp.kelly_safety:.2f}, cap = {sp.sizing_cap:.1f}×<br>"
-            f"&nbsp;&nbsp;Max leverage = {sp.leverage_cap:.0f}×")
+            f"&nbsp;&nbsp;Risk-per-trade = {sp.risk_per_trade:.2%} "
+            f"<span style='color:{SUBTEXT}'>(Kelly·Grossman-Zhou 도출)</span><br>"
+            f"&nbsp;&nbsp;Sizing cap = {sp.sizing_cap:.1f}× equity<br>"
+            f"&nbsp;&nbsp;Max leverage = {sp.leverage_cap:.0f}×<br>"
+            f"&nbsp;&nbsp;LM threshold = {sp.lm_threshold:.1f}, "
+            f"direct entry ≥ {sp.direct_entry_lm:.1f}σ")
         strat_card.setWordWrap(True)
         strat_card.setTextFormat(Qt.RichText)
         strat_card.setStyleSheet(

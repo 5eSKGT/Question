@@ -43,8 +43,24 @@ class SignalChartView(QWidget):
         import plotly.io as pio
         fig = build_signal_chart(symbol, candles, list(signals))
         fig.update_layout(paper_bgcolor="rgba(255,255,255,0)")
-        html = pio.to_html(fig, include_plotlyjs="cdn", full_html=True,
-                           config={"displaylogo": False, "responsive": True})
+        # Inline plotly.js (≈3MB) so the chart does not hit a CDN on every
+        # render — that round-trip alone was responsible for the "≥0.1s
+        # zoom" complaint. Disable mode-bar buttons we never use.
+        html = pio.to_html(
+            fig,
+            include_plotlyjs="inline",
+            full_html=True,
+            config={
+                "displaylogo": False,
+                "responsive": True,
+                "scrollZoom": True,                       # mouse-wheel zoom directly
+                "doubleClick": "reset",
+                "modeBarButtonsToRemove": [
+                    "lasso2d", "select2d", "autoScale2d", "toImage",
+                    "hoverCompareCartesian", "hoverClosestCartesian",
+                ],
+            },
+        )
         if html == self._last_html:
             return
         self._last_html = html

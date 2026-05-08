@@ -182,31 +182,38 @@ class TradingEngine:
             "pick_symbols": [r.symbol for r in scored],
         }
 
-        # ---- signal pass per active (sticky) pick -------------------- #
-        # We iterate active_picks rather than just `scored`: a pick that
-        # the screener flagged a few cycles ago is still tradable until
-        # its TTL expires, exactly like the backtest simulator.
-        for sym, (side, _expiry) in list(self._active_picks.items()):
-            df = self._candles_cache.get(sym)
+        # ---- HIST signal pass for EVERY cached symbol ----------------- #
+        # Group A is "what would have happened if we had been running this
+        # strategy on this symbol" — by design that is independent of
+        # whether the symbol passed today's screener. Running
+        # generate_signals across the full candle cache makes the chart
+        # populate with A/B/C markers for any symbol the user inspects,
+        # not just current picks. Cost is bounded: O(cache_size × bars)
+        # with vectorised indicators, well under one second per cycle.
+        actionable_signals: list[tuple[Signal, float]] = []      # (sig, last_price)
+        for sym, df in self._candles_cache.items():
             if df is None or df.empty:
                 continue
-
-            sigs = self.strategy.generate_signals(df, screener_side=side,
-                                                  source=SignalSource.HIST)
+            screener_side = self._active_picks.get(sym, (None, 0))[0]
+            sigs = self.strategy.generate_signals(
+                df, screener_side=screener_side, source=SignalSource.HIST)
             if not sigs:
                 continue
-
             last_ts = df.index[-1]
             for s in sigs:
-                # the most-recent timestamp belongs to group C
                 if s.ts == last_ts:
                     s.source = SignalSource.OOS
                 self.portfolio.add_signal(s)
-
-            # ---- act on latest signal ------------------------------- #
+            # Only act on the latest signal IF this symbol is currently
+            # an active pick — otherwise we draw markers for context but
+            # do not trade non-screener-confirmed symbols.
             latest = sigs[-1]
-            if latest.ts == last_ts:
-                self._handle_live_signal(latest, r.last_price)
+            if latest.ts == last_ts and screener_side is not None:
+                actionable_signals.append(
+                    (latest, float(df["close"].iloc[-1])))
+
+        for sig, last_price in actionable_signals:
+            self._handle_live_signal(sig, last_price)
 
         # ---- OOS evaluation ----------------------------------------- #
         self._run_oos_check()
