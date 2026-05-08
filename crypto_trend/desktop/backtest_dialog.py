@@ -119,7 +119,11 @@ class BacktestWorker(QThread):
                             last_pct[0] = pct
                     candles = fetch_bitget_ohlcv_parallel(
                         universe, "1h", self.p["bars"],
-                        max_workers=6, progress_cb=_on_progress)
+                        max_workers=6, progress_cb=_on_progress,
+                        should_stop=lambda: self._stop)
+                    if self._stop:
+                        self.log.emit("⚠ aborted during download")
+                        return
 
                     # Drop short-history symbols (new listings)
                     min_history = max(int(self.p["bars"] * 0.7), train_bars + test_bars)
@@ -147,8 +151,15 @@ class BacktestWorker(QThread):
                 )
                 self.log.emit(f"  running AlphaPulse walk-forward "
                                 f"(universe={len(candles)} symbols) …")
+                # Pass the worker's cancellation flag down through the
+                # simulator + walk_forward so a "Stop" press is honoured
+                # mid-run, not just between seeds.
                 wf = walk_forward_run(candles, train_bars=train_bars,
-                                       test_bars=test_bars, simulator=sim)
+                                       test_bars=test_bars, simulator=sim,
+                                       should_stop=lambda: self._stop)
+                if self._stop:
+                    self.log.emit("⚠ aborted mid walk-forward")
+                    return
 
                 self.log.emit("  running baselines …")
                 bh = _baseline_buyhold(candles, warmup=train_bars)
@@ -536,13 +547,40 @@ class BacktestDialog(QDialog):
         self.btn_stop.setEnabled(True)
 
     def _on_stop(self) -> None:
-        if self.worker:
-            self.worker.stop()
+        """Request cooperative cancellation. We do NOT clear
+        ``self.worker`` here — that is done by ``_on_finished`` once the
+        worker actually exits. Disowning the reference early left the
+        QThread orphaned and meant ``finished`` slots never ran, which
+        is why the Stop button used to "do nothing"."""
+        if self.worker is None:
+            return
+        self.worker.stop()
+        # Visual feedback while the worker drains its current op.
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.setText("중단 중…")
+        self.status_label_text("백테스트 중단 요청됨 — 정리 중…")
+
+    def status_label_text(self, msg: str) -> None:
+        # Helper so verdict pane shows we're working on the cancel.
+        self.verdict.setText(msg)
+        self.verdict.setStyleSheet(
+            f"color:#a05a00; padding:8px; background:#fff4e0; "
+            "border-radius:6px; font-size:12px;")
 
     def _on_finished(self) -> None:
+        # Worker thread exited (either naturally or via stop()).
+        was_stopped = bool(self.worker and self.worker._stop)
         self.worker = None
         self.btn_run.setEnabled(True)
         self.btn_stop.setEnabled(False)
+        # Reset the stop button label after a successful cancel.
+        self.btn_stop.setText("■ 중단")
+        if was_stopped:
+            self.log_view.appendPlainText("✓ 중단 완료")
+            self.verdict.setText("백테스트가 사용자 요청으로 중단되었습니다.")
+            self.verdict.setStyleSheet(
+                f"color:{SUBTEXT}; padding:8px; background:#f3f6fa; "
+                "border-radius:6px;")
 
     def _on_failed(self, msg: str) -> None:
         self.log_view.appendPlainText(f"⚠ {msg}")

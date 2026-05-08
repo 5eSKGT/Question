@@ -99,19 +99,28 @@ def fetch_bitget_ohlcv_parallel(symbols: list[str], timeframe: str = "1h",
                                   bars: int = 2000,
                                   max_workers: int = 6,
                                   cache_dir: Path | None = None,
-                                  progress_cb=None) -> dict[str, pd.DataFrame]:
+                                  progress_cb=None,
+                                  should_stop=None) -> dict[str, pd.DataFrame]:
     """Pull OHLCV for many symbols concurrently. Returns {symbol: DataFrame}.
 
-    Bitget's REST rate limit is ~10 req/s; with 6 worker threads and an
-    average request latency of 0.5–1.0 s we stay below the limit while
-    cutting total download time by roughly 5–6×. Each worker still hits
-    the on-disk parquet cache first so re-runs are near-instant.
+    ``should_stop`` is a cooperative cancellation predicate; if it
+    returns True we cancel any pending futures and return whatever we
+    have so far. Without this the GUI Stop button waited for *every*
+    download to finish even after being pressed.
     """
     candles: dict[str, pd.DataFrame] = {}
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(fetch_bitget_ohlcv, s, timeframe,
                                  bars, cache_dir): s for s in symbols}
         for i, fut in enumerate(as_completed(futures), start=1):
+            if should_stop is not None and should_stop():
+                # Cancel anything still pending — already-running
+                # futures will continue to completion (Python's
+                # Future API cannot interrupt blocking IO mid-call)
+                # but no new ones will be started.
+                for f in futures:
+                    f.cancel()
+                break
             sym = futures[fut]
             try:
                 candles[sym] = fut.result()

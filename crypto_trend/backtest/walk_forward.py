@@ -41,6 +41,7 @@ def walk_forward_run(
     test_bars: int = 24 * 7,             # 7 days
     simulator: StrategySimulator | None = None,
     oos_warmup_windows: int = 3,         # mirror live engine warmup behaviour
+    should_stop=None,                    # optional zero-arg callable returning bool
 ) -> WalkForwardResult:
     sim = simulator or StrategySimulator()
     if not candles:
@@ -65,10 +66,15 @@ def walk_forward_run(
     start = train_bars
     window_idx = 0
     while start + test_bars <= n:
+        # Cooperative cancellation point — checked at every walk-forward
+        # iteration so a "Stop" button click breaks within at most one
+        # window of latency (≈ a few seconds), not after the whole run.
+        if should_stop is not None and should_stop():
+            break
         end = start + test_bars
         slice_idx = common_idx[: end]
         sliced = {s: df.loc[df.index <= slice_idx[-1]] for s, df in candles.items()}
-        out = sim.run(sliced, warmup_bars=start)
+        out = sim.run(sliced, warmup_bars=start, should_stop=should_stop)
         rets = out["bar_returns"]
         if rets.size:
             bar_returns_all.append(rets)
@@ -107,7 +113,8 @@ def walk_forward_run(
                     slippage_bps=captured_sim.slippage_bps,
                     rescreen_every=captured_sim.rescreen_every,
                 )
-                trial_out = trial.run(sliced_now, warmup_bars=start)
+                trial_out = trial.run(sliced_now, warmup_bars=start,
+                                       should_stop=should_stop)
                 return trial_out["bar_returns"]
 
             adaptor = AdaptiveOOS(_recalibrate)

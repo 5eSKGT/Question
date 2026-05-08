@@ -88,7 +88,16 @@ class StrategySimulator:
     # ------------------------------------------------------------------ #
     def run(self, candles: dict[str, pd.DataFrame],
             warmup_bars: int = 256,
-            screener_top_n: int | None = None) -> dict:
+            screener_top_n: int | None = None,
+            should_stop=None) -> dict:
+        """Replay the strategy bar-by-bar.
+
+        ``should_stop`` is an optional zero-arg callable: if it returns
+        True at any cooperative checkpoint inside the bar loop, the
+        simulation halts and returns whatever results it has so far.
+        This is what makes the GUI "Stop" button responsive — without
+        it the simulator is opaque to cancellation.
+        """
         if not candles:
             return {"bar_returns": np.array([]), "trades": [], "exposure": 0.0}
 
@@ -131,6 +140,12 @@ class StrategySimulator:
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
 
         for t in range(warmup_bars, n_bars):
+            # Cooperative cancellation — checked once per bar so a
+            # "Stop" button click breaks within ≈ a millisecond.
+            # Sampling every 50 bars to keep the predicate cheap; the
+            # outer rescreen loop also checks once per rescreen_every.
+            if should_stop is not None and (t & 0x3F) == 0 and should_stop():
+                break
             ts = idx[t]
 
             # ---- rescreen ---------------------------------------------- #
