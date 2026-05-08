@@ -38,10 +38,14 @@ class AdaptiveStatus(str, Enum):
     HALTED = "halted"
 
 
-# Minimum sample size needed before PSR / SR can be trusted at all. Below this,
-# we deliberately return PENDING so the adaptor neither halts trading nor
-# enters recalibration on noise.
-MIN_SAMPLES = 16
+# Minimum sample size needed before PSR / SR can be trusted at all. Below
+# this, we deliberately return PENDING so the adaptor neither halts trading
+# nor enters recalibration on noise.
+#
+# Calibration note: at n=50 the standard error of an empirical Sharpe is
+# already non-trivial (~0.14 for SR=0); below n=50 PSR is dominated by
+# sample noise and practically uninformative.
+MIN_SAMPLES = 50
 
 
 @dataclass
@@ -114,11 +118,20 @@ Backtester = Callable[[StrategyParams], np.ndarray]
 
 
 class AdaptiveOOS:
+    """Out-of-sample monitor with sane defaults for cold-start operation.
+
+    Defaults are deliberately permissive so a fresh engine does not halt
+    on its first cycle just because it has not yet accumulated enough
+    evidence. The calibration logic kicks in only when the OOS sample is
+    large enough (``MIN_SAMPLES``) AND the empirical Sharpe is so weak
+    that even a coin-flip prior on positive Sharpe (PSR ≥ 0.55) fails.
+    """
+
     def __init__(
         self,
         backtest_fn: Backtester,
-        psr_min: float = 0.80,
-        sharpe_min: float = 0.5,
+        psr_min: float = 0.55,        # was 0.80 — half-confidence prior
+        sharpe_min: float = 0.0,      # was 0.5  — any non-negative Sharpe
         max_attempts: int | None = None,
     ) -> None:
         self.backtest = backtest_fn

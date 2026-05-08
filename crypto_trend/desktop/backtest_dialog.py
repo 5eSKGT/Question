@@ -40,10 +40,10 @@ from PySide6.QtCore import QObject, QThread, Qt, Signal
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog,
                                 QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-                                QHBoxLayout, QLabel, QPlainTextEdit,
-                                QPushButton, QSpinBox, QTableWidget,
-                                QTableWidgetItem, QTabWidget, QVBoxLayout,
-                                QWidget)
+                                QFrame, QHBoxLayout, QLabel, QPlainTextEdit,
+                                QPushButton, QScrollArea, QSpinBox,
+                                QTableWidget, QTableWidgetItem, QTabWidget,
+                                QVBoxLayout, QWidget)
 
 from ..config import STATE_DIR
 from .theme import (ACCENT, ACCENT_DEEP, GRAY, GREEN, RED, SUBTEXT,
@@ -201,7 +201,12 @@ class BacktestDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("📊 백테스트 — 구성 및 실행")
         self.setWindowIcon(QIcon(str(icon_path())))
-        self.resize(1100, 760)
+        # Default size kept under a 1080-tall display minus taskbar (~1040
+        # usable). The dialog is fully resizable and the form panel sits
+        # inside a QScrollArea so even smaller laptops can scroll to every
+        # control.
+        self.resize(1080, 660)
+        self.setMinimumSize(900, 520)
         self.setModal(True)
 
         self.worker: BacktestWorker | None = None
@@ -254,11 +259,10 @@ class BacktestDialog(QDialog):
     # Build sub-panels
     # ================================================================== #
     def _build_form_panel(self) -> QWidget:
-        wrapper = QWidget()
-        wrapper.setMinimumWidth(360)
-        wrapper.setMaximumWidth(420)
-        v = QVBoxLayout(wrapper)
-        v.setContentsMargins(0, 0, 0, 0)
+        # Inner content widget — holds every form field
+        inner = QWidget()
+        v = QVBoxLayout(inner)
+        v.setContentsMargins(0, 0, 6, 0)
         v.setSpacing(8)
 
         head = QLabel("⚙  설정"); head.setStyleSheet("font-size:14px; font-weight:600;")
@@ -372,7 +376,17 @@ class BacktestDialog(QDialog):
 
         v.addStretch(1)
         self._on_source_change(self.source_combo.currentIndex())
-        return wrapper
+
+        # Wrap in a scroll area so the form is always reachable on
+        # smaller laptops where the dialog otherwise overflows the screen.
+        scroll = QScrollArea()
+        scroll.setWidget(inner)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setMinimumWidth(360)
+        scroll.setMaximumWidth(420)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        return scroll
 
     # ---- preset application ------------------------------------------ #
     def _preset_defensive(self) -> None:

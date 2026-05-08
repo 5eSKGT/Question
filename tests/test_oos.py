@@ -53,3 +53,15 @@ def test_adaptive_pending_when_too_few_samples():
                            max_attempts=1)
     rep = adaptor.step(StrategyParams())
     assert rep.status == AdaptiveStatus.PENDING
+
+
+def test_adaptive_pending_below_min_samples():
+    """Returns array under MIN_SAMPLES bars → PENDING (no halt)."""
+    rng = np.random.default_rng(0)
+    def small_backtest(_p):
+        return rng.normal(0, 0.001, 30)        # well under MIN_SAMPLES=50
+
+    adaptor = AdaptiveOOS(small_backtest, psr_min=0.99, sharpe_min=2.0,
+                           max_attempts=1)
+    rep = adaptor.step(StrategyParams())
+    assert rep.status == AdaptiveStatus.PENDING

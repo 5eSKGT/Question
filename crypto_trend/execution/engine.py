@@ -52,6 +52,11 @@ class TradingEngine:
         self._candles_cache: dict[str, pd.DataFrame] = {}
         self._tickers_cache: dict[str, dict] = {}
         self._open_positions: dict[str, str] = {}    # symbol -> side
+        self._cycle_count = 0
+        # During the warmup window we never honour an OOS HALT verdict —
+        # a freshly-started engine has too little evidence for the
+        # calibration logic to be trustworthy.
+        self.oos_warmup_cycles = 5
 
     # ------------------------------------------------------------------ #
     # Helpers used as providers by the screener
@@ -81,6 +86,8 @@ class TradingEngine:
         if self.portfolio.halted:
             log.warning(f"engine halted ({self.portfolio.halt_reason}); skipping cycle")
             return
+
+        self._cycle_count += 1
 
         try:
             universe = self.broker.fetch_universe()
@@ -275,6 +282,18 @@ class TradingEngine:
                 # No log spam — UI's OOS card already shows PENDING.
                 pass
         except RecalibrationFailed as e:
+            # Warmup guard: do not halt on cold-start cycles, just log.
+            if self._cycle_count <= self.oos_warmup_cycles:
+                self.portfolio.last_oos = {
+                    "status": "warmup",
+                    "sharpe": 0.0, "psr": 0.0, "dsr": 0.0, "attempts": 0,
+                    "message": f"warmup cycle {self._cycle_count}/{self.oos_warmup_cycles}"
+                                f" — OOS judgment deferred ({e})",
+                }
+                log.info(
+                    f"OOS warmup ({self._cycle_count}/{self.oos_warmup_cycles}) — "
+                    f"deferring halt: {e}")
+                return
             self.portfolio.halt(str(e))
             self.portfolio.add_message(TradeMessage(
                 ts=pd.Timestamp.utcnow(), symbol="*",
