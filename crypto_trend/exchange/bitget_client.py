@@ -100,6 +100,21 @@ class BitgetClient:
         df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
         return df.set_index("ts")
 
+    def fetch_funding_rate(self, symbol: str) -> float | None:
+        """Most recent funding rate for `symbol`. Returns None if missing."""
+        try:
+            r = self._ex.fetch_funding_rate(symbol)
+        except Exception:                                                # noqa: BLE001
+            return None
+        rate = r.get("fundingRate") if isinstance(r, dict) else None
+        if rate is None and isinstance(r, dict):
+            info = r.get("info") or {}
+            rate = info.get("fundingRate") or info.get("funding_rate")
+        try:
+            return float(rate) if rate is not None else None
+        except (TypeError, ValueError):
+            return None
+
     # ---- account ------------------------------------------------------- #
     def fetch_balance_usdt(self) -> float:
         bal = self._ex.fetch_balance({"type": "swap"})
@@ -202,6 +217,16 @@ class PaperBroker:
         if not df.empty:
             self._last_price[symbol] = float(df["close"].iloc[-1])
         return df
+
+    def fetch_funding_rate(self, symbol: str) -> float | None:
+        """Delegate to live market client when available; paper mode returns
+        ``None`` so the screener's funding filter stays permissive."""
+        if self.market is None:
+            return None
+        try:
+            return self.market.fetch_funding_rate(symbol)
+        except Exception:                                                # noqa: BLE001
+            return None
 
     # ---- account ------------------------------------------------------- #
     def fetch_balance_usdt(self) -> float:

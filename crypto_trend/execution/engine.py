@@ -57,6 +57,9 @@ class TradingEngine:
         # a freshly-started engine has too little evidence for the
         # calibration logic to be trustworthy.
         self.oos_warmup_cycles = 5
+        # Optional progress callback (stage, current, total) — let the
+        # GUI render real-time feedback during long-running cycles.
+        self.progress_callback = None
 
     # ------------------------------------------------------------------ #
     # Helpers used as providers by the screener
@@ -79,17 +82,36 @@ class TradingEngine:
                     pass
         return 0.0
 
+    def _funding_rate(self, symbol: str) -> float | None:
+        """Best-effort funding rate fetch for the screener's perp filter."""
+        fetcher = getattr(self.broker, "fetch_funding_rate", None)
+        if fetcher is None:
+            return None
+        try:
+            return float(fetcher(symbol))
+        except Exception:                                                # noqa: BLE001
+            return None
+
     # ------------------------------------------------------------------ #
     # Run one full cycle
     # ------------------------------------------------------------------ #
+    def _emit(self, stage: str, current: int = 0, total: int = 0) -> None:
+        if self.progress_callback:
+            try:
+                self.progress_callback(stage, current, total)
+            except Exception:                                            # noqa: BLE001
+                pass
+
     def run_once(self) -> None:
         if self.portfolio.halted:
             log.warning(f"engine halted ({self.portfolio.halt_reason}); skipping cycle")
             return
 
         self._cycle_count += 1
+        self._emit("starting_cycle")
 
         try:
+            self._emit("fetching_universe")
             universe = self.broker.fetch_universe()
             self._tickers_cache = self.broker.fetch_tickers(universe)
         except Exception as e:                                       # noqa: BLE001
@@ -114,15 +136,23 @@ class TradingEngine:
             if self._quote_volume(s) >= self.screener.min_quote_volume
         ]
         log.info(f"universe={len(universe)} prefiltered={len(prefiltered)}")
+        self._emit("prefiltered", len(prefiltered), len(universe))
+
         self._candles_cache.clear()
-        for s in prefiltered:
+        for i, s in enumerate(prefiltered, start=1):
             try:
                 self._ohlcv(s)
             except Exception as e:                                   # noqa: BLE001
                 log.debug(f"ohlcv fail {s}: {e}")
+            if i % 5 == 0 or i == len(prefiltered):
+                self._emit("downloading_ohlcv", i, len(prefiltered))
 
-        scored = self.screener.run(prefiltered, self._ohlcv, self._quote_volume)
+        self._emit("screening", 0, len(prefiltered))
+        scored = self.screener.run(
+            prefiltered, self._ohlcv, self._quote_volume,
+            funding_rate_provider=self._funding_rate)
         log.info(f"screener picked {len(scored)} symbols")
+        self._emit("screened", len(scored), len(prefiltered))
 
         # ---- signal pass per symbol ---------------------------------- #
         for r in scored:
@@ -160,6 +190,7 @@ class TradingEngine:
             log.error(f"portfolio refresh failed: {e}")
 
         self.portfolio.save()
+        self._emit("done", self._cycle_count, self._cycle_count)
 
     # ------------------------------------------------------------------ #
     # Handle a freshly-fired live signal

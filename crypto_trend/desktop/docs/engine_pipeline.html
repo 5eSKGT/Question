@@ -929,6 +929,70 @@ f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))<
 </p>
 </div>
 
+<h2>3-자 파이프라인 정렬 — 라이브 / 백테스트 / 차트</h2>
+
+<div class="card">
+<p>
+  <b>이 시스템의 결과를 신뢰하려면 세 파이프라인이 같은 환경을 공유해야 합니다.</b>
+  사용자가 백테스트에서 universe / bars / walk-forward 등을 임의로 바꾸면
+  결과가 라이브 운용을 예측하지 못하므로, 환경 파라미터는 라이브 엔진에서
+  자동으로 가져오고 사용자에게 노출하지 않습니다. 만질 수 있는 건 <b>전략
+  파라미터와 비용 모델</b>뿐입니다.
+</p>
+
+<table>
+  <tr><th style="width:24%">단계</th><th>라이브 엔진</th><th>백테스트 시뮬</th><th>차트 랜더링</th></tr>
+  <tr><td>유니버스</td>
+      <td>전체 USDT-Perp · quote_volume ≥ $5M</td>
+      <td><b>동일</b> — fetch_bitget_universe(top_k=None)</td>
+      <td>candles_cache 의 모든 심볼 드롭다운에 노출</td></tr>
+  <tr><td>봉 / 타임프레임</td>
+      <td>500 × 1h</td>
+      <td><b>동일</b> — SETTINGS.history_bars 자동 적용</td>
+      <td>같은 DataFrame 그대로 plotly 캔들로 표시</td></tr>
+  <tr><td>사전 필터</td>
+      <td>screener.min_quote_volume</td>
+      <td><b>동일</b> — data loader 단계에서 동일 임계치</td>
+      <td>—</td></tr>
+  <tr><td>스크리너</td>
+      <td>WinnerLoserScreener.run() · funding_rate_provider 전달</td>
+      <td><b>동일</b> — 같은 클래스 인스턴스, 동일 인자</td>
+      <td>—</td></tr>
+  <tr><td>전략 신호</td>
+      <td>generate_signals() → A/B/C 라벨링</td>
+      <td>simulator 가 indicators 사전 계산 후 동일 진입/청산 룰 적용</td>
+      <td>SIGNAL_STYLE 단일 테이블로 invariant 보장</td></tr>
+  <tr><td>사이징</td>
+      <td>optimal_position()</td>
+      <td><b>동일</b> 함수 호출</td>
+      <td>—</td></tr>
+  <tr><td>실행 비용</td>
+      <td>broker.submit() · 실거래는 실제 fee</td>
+      <td>taker 6 bps + slippage 1 bps (사용자 조정 가능)</td>
+      <td>—</td></tr>
+  <tr><td>Walk-forward</td>
+      <td>walk_forward_train_days / test_days</td>
+      <td><b>동일</b> 값 자동 적용</td>
+      <td>—</td></tr>
+  <tr><td>OOS 게이트</td>
+      <td>AdaptiveOOS.step() + warmup 5 사이클</td>
+      <td>walk-forward 윈도우별 평가</td>
+      <td>OOS 카드 상태 표시</td></tr>
+  <tr><td>피드백</td>
+      <td>progress_callback → GUI 상태바 실시간</td>
+      <td>QThread 로그 panel</td>
+      <td>심볼 콤보 + 메시지 로그</td></tr>
+</table>
+
+<p>
+  <b>사용자가 백테스트에서 만질 수 있는 것</b>: 데이터 소스(synthetic/bitget),
+  전략 파라미터 6 개 (CVaR floor / α / Vol-target / Kelly safety / sizing cap /
+  leverage cap), 비용 모델 (taker, slippage), 3 개의 프리셋 버튼.
+  이 외 전부 — universe 크기, 봉 수, walk-forward 일수, top-N — 은 라이브와
+  동일하게 고정되어 있습니다.
+</p>
+</div>
+
 <h2>한 트레이드의 일생 — 시간 순</h2>
 <div class="card">
 <ol>

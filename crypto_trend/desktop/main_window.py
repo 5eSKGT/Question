@@ -439,6 +439,8 @@ class AlphaPulseWindow(QMainWindow):
         self.worker.cycle_error.connect(lambda msg: self.status_label.setText(
             f"⚠ 오류: {msg}"))
         self.worker.halted.connect(self._on_engine_halt)
+        self.worker.progress.connect(self._on_engine_progress)
+        self.worker.symbols_updated.connect(self._on_symbols_updated)
         self.worker.start()
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
@@ -468,6 +470,42 @@ class AlphaPulseWindow(QMainWindow):
             self, "⚠ 매매 자동 중단",
             f"OOS 자가보정 실패로 매매가 자동 중단되었습니다.\n\n사유: {reason}\n\n"
             "전략 파라미터를 조정한 뒤 ‘재개’를 눌러주세요.")
+
+    # ------------------------------------------------------------------ #
+    _STAGE_LABELS = {
+        "starting_cycle":       "사이클 시작",
+        "fetching_universe":    "유니버스 조회 중",
+        "prefiltered":          "사전 필터 적용",
+        "downloading_ohlcv":    "OHLCV 다운로드 중",
+        "screening":            "스크리너 평가 중",
+        "screened":             "스크리닝 완료",
+        "done":                 "사이클 완료",
+    }
+
+    def _on_engine_progress(self, stage: str, current: int, total: int) -> None:
+        label = self._STAGE_LABELS.get(stage, stage)
+        if total:
+            self.status_label.setText(f"⚙ {label} … {current}/{total}")
+        else:
+            self.status_label.setText(f"⚙ {label} …")
+
+    def _on_symbols_updated(self, symbols: list) -> None:
+        """When the engine refreshes its candle cache, expose every
+        downloaded symbol in the chart dropdown so the user can browse
+        the universe even if the screener has not produced signals yet."""
+        cur = self.symbol_combo.currentText()
+        existing = [self.symbol_combo.itemText(i)
+                     for i in range(self.symbol_combo.count())]
+        if symbols and symbols != existing:
+            self.symbol_combo.blockSignals(True)
+            self.symbol_combo.clear()
+            self.symbol_combo.addItems(symbols)
+            if cur in symbols:
+                self.symbol_combo.setCurrentText(cur)
+            else:
+                self.symbol_combo.setCurrentIndex(0)
+            self.symbol_combo.blockSignals(False)
+            self._render_chart()
 
     # ================================================================== #
     # Periodic refresh
@@ -513,18 +551,11 @@ class AlphaPulseWindow(QMainWindow):
             self.halt_status.setText("정상")
             self.halt_status.setStyleSheet(f"color:{GREEN};")
 
-        # symbol dropdown sync
-        syms = sorted({s.symbol for s in self.portfolio.signals if s.symbol})
-        cur = self.symbol_combo.currentText()
-        existing = [self.symbol_combo.itemText(i) for i in range(self.symbol_combo.count())]
-        if syms != existing:
-            self.symbol_combo.blockSignals(True)
-            self.symbol_combo.clear()
-            self.symbol_combo.addItems(syms)
-            if cur in syms:
-                self.symbol_combo.setCurrentText(cur)
-            self.symbol_combo.blockSignals(False)
-            self._render_chart()
+        # Symbol dropdown is now driven by `_on_symbols_updated` — fired
+        # once per cycle from the engine's full candle cache. We no longer
+        # filter to "symbols with signals only" because that left the
+        # dropdown empty between picks. Anything in the universe with a
+        # downloaded candle history is browsable.
 
         # message log
         target_count = len(self.portfolio.messages)
@@ -560,6 +591,9 @@ class AlphaPulseWindow(QMainWindow):
         if candles is None or candles.empty:
             self.chart.clear()
             return
+        # Render every cached symbol — passing an empty signals list is
+        # fine: the chart shows raw candles even when the screener has
+        # not produced any A/B/C markers for this symbol yet.
         sigs = [s for s in self.portfolio.signals if s.symbol == sym]
         self.chart.render(sym, candles, sigs)
 

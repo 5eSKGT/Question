@@ -91,7 +91,14 @@ def fetch_bitget_ohlcv(symbol: str, timeframe: str = "1h",
 
 def fetch_bitget_universe(min_quote_volume: float = 5e6,
                            top_k: int | None = None) -> list[str]:
-    """Return USDT-perp symbols with non-trivial 24h turnover."""
+    """Return USDT-perp symbols passing the live-engine quote-volume floor.
+
+    Defaults match the live engine exactly (min_quote_volume = $5M = the
+    same screener pre-filter). ``top_k=None`` returns the entire qualifying
+    universe — that's the live-mirroring behaviour. Pass an integer
+    ``top_k`` only when you explicitly want a smaller universe for a quick
+    preview.
+    """
     import ccxt
     ex = ccxt.bitget({"enableRateLimit": True,
                        "options": {"defaultType": "swap"}})
@@ -106,7 +113,7 @@ def fetch_bitget_universe(min_quote_volume: float = 5e6,
         if qv >= min_quote_volume:
             rows.append((sym, qv))
     rows.sort(key=lambda x: x[1], reverse=True)
-    if top_k is not None:
+    if top_k:
         rows = rows[:top_k]
     return [r[0] for r in rows]
 

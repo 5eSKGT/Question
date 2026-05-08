@@ -97,9 +97,18 @@ class StrategySimulator:
             s: _precompute(candles_aligned[s], p) for s in symbols
         }
 
+        # Default screener mirrors the live one — same defaults as
+        # ``crypto_trend/screener/winner_loser.py::WinnerLoserScreener``,
+        # except we permit a configurable top_n for backtest speed.
+        # Default screener mirrors the live one — same defaults as
+        # ``crypto_trend/screener/winner_loser.py::WinnerLoserScreener``,
+        # except we drop the liquidity floor here because the candle data
+        # passed to the simulator has already been pre-filtered by the
+        # data loader (live mirror).
         screener = self.screener or WinnerLoserScreener(
-            lookback=24, hurst_floor=0.0, min_quote_volume=0.0,
-            min_horizons_agree=2, top_n=screener_top_n or 5)
+            min_quote_volume=0.0,
+            top_n=screener_top_n or 10,
+        )
 
         positions: dict[str, dict] = {}
         trades: list[Trade] = []

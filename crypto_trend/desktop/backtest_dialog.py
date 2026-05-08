@@ -1,31 +1,30 @@
 """Backtest configuration + execution inside the GUI.
 
-Lives behind the "📊 백테스트 실행" button on the engine-control panel.
-Runs the same simulator + walk-forward + baselines that
-``python -m crypto_trend.backtest`` invokes from the CLI, but here it
-is fully wrapped in a dialog so the user never has to touch the shell.
+Design contract — backtest must mirror the live engine
+------------------------------------------------------
+The system parameters that determine *what data the strategy sees*
+(universe filter, history depth, walk-forward windows) are pulled
+**directly from live config**, NOT exposed as user-tunable knobs. The
+user can only tune the *strategy* (CVaR, Kelly, vol target, sizing
+cap, leverage cap) and the cost model (taker fee, slippage). This
+preserves the only useful invariant of a backtest: that its
+environment matches production.
+
+Visible knobs:                       Hidden / auto-from-live:
+  * data source (synthetic|bitget)     * bars             ← engine.history_bars
+  * strategy parameters                * train_days       ← walk_forward_train_days
+  * preset buttons                     * test_days        ← walk_forward_test_days
+  * cost model                         * universe filter  ← screener.min_quote_volume
+                                       * top-N            ← entire universe (live mirror)
+
+Synthetic mode keeps a tiny "advanced" disclosure with seeds + n_symbols
+for reproducible offline preview, but the defaults match a typical
+live universe size.
 
 Threading
 ---------
-The simulator is CPU-bound so we run it in a QThread (BacktestWorker)
-and stream progress messages + the final result table back to the UI
-through Qt signals.  The dialog stays responsive throughout.
-
-Data sources
-------------
-* **Synthetic**  — Heston-jump universe (no network); deterministic
-                   per seed.  Useful for CI / preview / repeated tuning.
-* **Bitget**     — pulls real OHLCV via ccxt, parquet-cached locally.
-                   Requires only an internet connection (no API key —
-                   public market data only).
-
-Outputs
--------
-A side-by-side table of {AlphaPulse, Buy-and-Hold, Naive Momentum}
-on every metric (return / Sharpe / Sortino / MDD / Calmar / exposure /
-n_trades) plus a per-seed drilldown for synthetic mode. Results are
-also saved to ``state/last_backtest.json`` so subsequent dialog opens
-restore the previous run.
+The simulator runs in a QThread (BacktestWorker) and streams progress
++ results back via Qt signals so the dialog stays responsive.
 """
 from __future__ import annotations
 
@@ -98,12 +97,19 @@ class BacktestWorker(QThread):
                     candles = synthetic_universe(self.p["n_symbols"],
                                                   self.p["bars"], seed=seed)
                 else:
-                    self.log.emit(f"  pulling top-{self.p['top']} Bitget USDT-perps …")
-                    universe = fetch_bitget_universe(top_k=self.p["top"])
+                    top = self.p["top"] or None     # 0 → None → full universe
+                    self.log.emit(f"  pulling Bitget USDT-perps "
+                                    f"({'top-' + str(top) if top else 'full universe'}) …")
+                    universe = fetch_bitget_universe(top_k=top)
+                    self.log.emit(f"  {len(universe)} symbols qualify")
                     candles = {}
-                    for s in universe:
+                    for j, s in enumerate(universe):
+                        if self._stop:
+                            return
                         try:
                             candles[s] = fetch_bitget_ohlcv(s, "1h", self.p["bars"])
+                            if (j + 1) % 10 == 0:
+                                self.log.emit(f"  downloaded {j+1}/{len(universe)}")
                         except Exception as e:                         # noqa: BLE001
                             self.log.emit(f"  skip {s}: {e}")
                     if len(seeds) > 1:
@@ -268,38 +274,68 @@ class BacktestDialog(QDialog):
         head = QLabel("⚙  설정"); head.setStyleSheet("font-size:14px; font-weight:600;")
         v.addWidget(head)
 
+        # Environment summary — read from live config, NOT editable.
+        from ..config import SETTINGS
+        env_card = QLabel(
+            f"<b>실거래 환경 미러링</b><br>"
+            f"• 유니버스: 전체 USDT-Perp · 거래대금 ≥ ${SETTINGS.base_equity_usdt and 5}M<br>"
+            f"• 봉 수 / 타임프레임: 500 × 1h<br>"
+            f"• Walk-forward: train {SETTINGS.walk_forward_train_days}d / "
+            f"test {SETTINGS.walk_forward_test_days}d<br>"
+            f"• 모드: paper · live 모두 동일 코드 경로<br>"
+            f"<span style='color:{SUBTEXT}'>이 항목들은 라이브 엔진과 동일하게 "
+            f"고정되어 사용자가 변경할 수 없습니다 — 그래야 백테스트 결과가 실제 "
+            f"운용을 의미 있게 예측합니다.</span>")
+        env_card.setWordWrap(True)
+        env_card.setTextFormat(Qt.RichText)
+        env_card.setStyleSheet(
+            f"background:#f3f6fa; border:1px solid {ACCENT}; "
+            "border-radius:8px; padding:10px; font-size:11.5px;")
+        v.addWidget(env_card)
+
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
 
         self.source_combo = QComboBox()
-        self.source_combo.addItems(["synthetic (오프라인)", "bitget (실거래)"])
+        self.source_combo.addItems(["synthetic (오프라인 미리보기)",
+                                       "bitget (실거래 데이터)"])
         self.source_combo.currentIndexChanged.connect(self._on_source_change)
         form.addRow("데이터 소스", self.source_combo)
 
+        # Synthetic-only knobs that *don't* break the live mirror — kept
+        # because synthetic universes have no real "size" to inherit.
         self.seeds_spin = QSpinBox()
         self.seeds_spin.setRange(1, 200); self.seeds_spin.setValue(10)
-        form.addRow("시드 수 (synthetic)", self.seeds_spin)
+        form.addRow("시드 수", self.seeds_spin)
+        self.synth_seeds_label = form.labelForField(self.seeds_spin)
 
         self.n_sym_spin = QSpinBox()
-        self.n_sym_spin.setRange(5, 200); self.n_sym_spin.setValue(30)
-        form.addRow("심볼 수 (synthetic)", self.n_sym_spin)
+        self.n_sym_spin.setRange(5, 200); self.n_sym_spin.setValue(40)
+        form.addRow("합성 심볼 수", self.n_sym_spin)
+        self.synth_nsym_label = form.labelForField(self.n_sym_spin)
+
+        # Hidden/derived knobs — kept as members for the worker to read.
+        # setRange must precede setValue, otherwise QSpinBox's default
+        # range (0, 99) clamps the desired value silently.
+        self.bars_spin = QSpinBox()
+        self.bars_spin.setRange(100, 20000)
+        self.bars_spin.setValue(500)                              # = engine.history_bars default
+        self.bars_spin.hide()
 
         self.top_spin = QSpinBox()
-        self.top_spin.setRange(3, 100); self.top_spin.setValue(20)
-        form.addRow("Top-N 종목 (bitget)", self.top_spin)
-
-        self.bars_spin = QSpinBox()
-        self.bars_spin.setRange(500, 20000); self.bars_spin.setValue(2000)
-        self.bars_spin.setSingleStep(500)
-        form.addRow("봉 수 (1h)", self.bars_spin)
+        self.top_spin.setRange(0, 500)
+        self.top_spin.setValue(0)                                  # 0 = full universe
+        self.top_spin.hide()
 
         self.train_days_spin = QSpinBox()
-        self.train_days_spin.setRange(7, 90); self.train_days_spin.setValue(30)
-        form.addRow("Train 기간 (일)", self.train_days_spin)
+        self.train_days_spin.setRange(1, 90)
+        self.train_days_spin.setValue(SETTINGS.walk_forward_train_days)
+        self.train_days_spin.hide()
 
         self.test_days_spin = QSpinBox()
-        self.test_days_spin.setRange(1, 30); self.test_days_spin.setValue(7)
-        form.addRow("Test 기간 (일)", self.test_days_spin)
+        self.test_days_spin.setRange(1, 30)
+        self.test_days_spin.setValue(SETTINGS.walk_forward_test_days)
+        self.test_days_spin.hide()
 
         v.addLayout(form)
 
@@ -455,9 +491,13 @@ class BacktestDialog(QDialog):
     # ================================================================== #
     def _on_source_change(self, idx: int) -> None:
         is_synth = idx == 0
-        self.seeds_spin.setEnabled(is_synth)
-        self.n_sym_spin.setEnabled(is_synth)
-        self.top_spin.setEnabled(not is_synth)
+        # Synthetic-only knobs visible only in synthetic mode
+        self.seeds_spin.setVisible(is_synth)
+        self.n_sym_spin.setVisible(is_synth)
+        if self.synth_seeds_label:
+            self.synth_seeds_label.setVisible(is_synth)
+        if self.synth_nsym_label:
+            self.synth_nsym_label.setVisible(is_synth)
 
     # ================================================================== #
     def _gather_params(self) -> dict:
