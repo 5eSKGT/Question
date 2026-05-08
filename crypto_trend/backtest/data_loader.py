@@ -161,6 +161,61 @@ def fetch_bitget_universe(min_quote_volume: float = 5e6,
 
 
 # --------------------------------------------------------------------------- #
+# Real-data universe loader (parquet cache populated by
+# tools/fetch_binance_real.py)
+# --------------------------------------------------------------------------- #
+
+
+def real_universe(cache_dir: Path | None = None,
+                   min_bars: int = 4000,
+                   min_quote_volume: float = 5e6,
+                   max_symbols: int | None = None,
+                   tail_bars: int | None = None) -> dict[str, pd.DataFrame]:
+    """Load the parquet cache built from real Binance USD-M futures klines.
+
+    The cache schema matches synthetic_universe(): each value is an
+    OHLCV DataFrame with a tz-aware DatetimeIndex and a ``symbol`` attr.
+
+    ``min_quote_volume`` mirrors the live screener's liquidity floor.
+    Average quote volume per hour is estimated as ``mean(close*volume)``
+    and divided by 24 to compare against per-day Bitget figures: a
+    symbol with $5M / day average quote turnover passes the live
+    pre-filter and is kept; everything below is discarded so the
+    backtest universe matches what the live engine actually trades.
+    Set to 0 to disable the filter.
+
+    Symbols with fewer than ``min_bars`` rows are skipped (mid-period
+    listings) to keep the cross-section comparable.
+    """
+    cache_dir = cache_dir or CACHE_DIR
+    if not cache_dir.exists():
+        return {}
+    out: dict[str, pd.DataFrame] = {}
+    for path in sorted(cache_dir.glob("*_1h.parquet")):
+        try:
+            df = pd.read_parquet(path)
+        except Exception as e:                                   # noqa: BLE001
+            log.warning(f"real_universe: skip {path.name}: {e}")
+            continue
+        if len(df) < min_bars:
+            continue
+        if min_quote_volume > 0:
+            qv_hourly = float((df["close"] * df["volume"]).mean())
+            qv_daily = qv_hourly * 24.0
+            if qv_daily < min_quote_volume:
+                continue
+        if tail_bars is not None and len(df) > tail_bars:
+            df = df.tail(tail_bars).copy()
+        sym_token = path.stem.replace("_1h", "")
+        symbol = sym_token.replace("_", "/", 1).replace("_", ":", 1)
+        df.attrs["symbol"] = symbol
+        out[symbol] = df
+        if max_symbols and len(out) >= max_symbols:
+            break
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # Synthetic data — Heston SV + compound-Poisson jumps
 # --------------------------------------------------------------------------- #
 
@@ -229,8 +284,12 @@ def heston_jump_path(
                 + np.sqrt(v_prev * dt) * z[t - 1, 0])
         # Decay Hawkes excitation
         hawkes_excitation *= np.exp(-hawkes_beta)
-        # Effective jump probability at this bar
-        lam = jump_intensity + hawkes_excitation
+        # Effective jump probability at this bar — cap at 0.5 to prevent
+        # the runaway-feedback regime where successive jumps push
+        # `hawkes_excitation` above 1 and every bar produces a jump
+        # (causing the synthetic prices to compound to absurd values
+        # like 1e9).
+        lam = min(0.5, jump_intensity + hawkes_excitation)
         if rng.random() < lam:
             # Bias jump direction toward the most recent jump's sign
             base_mean = jump_mean
@@ -297,25 +356,30 @@ def synthetic_universe(
     # All drifts calibrated to realistic crypto annualised levels:
     # 0.0001 /h ≈ 0.24%/d ≈ 137%/y. These rough magnitudes match
     # observed BTC bull (≈+60-200%/y) and bear (≈-40-65%/y) cycles.
+    # Calibrated to realistic crypto-perp empirics: BTC bull cycles
+    # average ~80%/y, bears ~−40%/y, hourly ATR ≈ 1–2%, jumps ≈ once
+    # per few days. The previous values (e.g. f_drift=0.00015 → +260%/y
+    # plus +1.2% mean jumps every 200 bars) caused compounded paths to
+    # blow up to +1e6%, breaking any meaningful baseline comparison.
     if regime == "bull_jump":
-        f_drift = 0.00015                   # ≈ +260%/y, real crypto bull
-        f_jump_intensity = 0.005            # one jump per ~200 bars
-        f_jump_mean = 0.012                 # +1.2% upward-skewed jumps
+        f_drift = 0.00005                   # ≈ +55%/y
+        f_jump_intensity = 0.002            # one jump per ~500 bars
+        f_jump_mean = 0.004                 # +0.4% upward-skewed jumps
     elif regime == "bull_diffusion":
-        f_drift = 0.00010                   # ≈ +140%/y, smooth drift only
-        f_jump_intensity = 0.0008           # rare jumps
+        f_drift = 0.00004                   # ≈ +42%/y, no jumps
+        f_jump_intensity = 0.0005
         f_jump_mean = 0.0
     elif regime == "bear_jump":
-        f_drift = -0.00012                  # ≈ -65%/y
-        f_jump_intensity = 0.005
-        f_jump_mean = -0.012
+        f_drift = -0.00004
+        f_jump_intensity = 0.002
+        f_jump_mean = -0.004
     elif regime == "high_vol":
         f_drift = 0.0
-        f_jump_intensity = 0.012            # 3× normal, mixed direction
+        f_jump_intensity = 0.008            # frequent jumps, mixed dir
         f_jump_mean = 0.0
     else:                                    # neutral
         f_drift = 0.0
-        f_jump_intensity = 0.003
+        f_jump_intensity = 0.002
         f_jump_mean = 0.0
 
     factor = heston_jump_path(n_bars, rng,

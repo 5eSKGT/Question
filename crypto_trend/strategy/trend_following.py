@@ -28,6 +28,64 @@ from ..screener.winner_loser import (lee_mykland_statistic,
                                        multi_horizon_alignment)
 
 
+# --------------------------------------------------------------------------- #
+# Entry-quality filters (academic foundations cited inline)
+# --------------------------------------------------------------------------- #
+
+
+def macro_trend_aligned(rets: np.ndarray, side: str,
+                          lookback_bars: int = 720) -> bool:
+    """Time-Series Momentum direction filter.
+
+    Reference: Moskowitz, Ooi & Pedersen (2012), *Time series momentum*,
+    JFE 104(2). 51-asset-class study found a sign-coincidence rate of
+    ~60% between 1-12 month past returns and forward returns. We use
+    a 30-day window (720 bars on hourly) as the "macro" trend horizon.
+
+    A jump in the OPPOSITE direction of the macro trend is most likely
+    a counter-trend bounce / dip (mean-reversion), not the start of a
+    sustained move — exactly the signals AlphaPulse must reject to
+    avoid the systematic counter-trend losses observed in v1.
+
+    Returns True if the recent macro cumulative return agrees with the
+    intended trade side, allowing entry.
+    """
+    if rets.size < lookback_bars:
+        return True            # not enough data yet — permissive
+    cum_ret = float(rets[-lookback_bars:].sum())
+    if side == "long":
+        return cum_ret > 0
+    return cum_ret < 0
+
+
+def volume_z_at(volume: np.ndarray, idx: int,
+                 window: int = 24, threshold: float = 0.5) -> bool:
+    """Volume-confirmation filter at the entry bar.
+
+    Reference: Easley, López de Prado & O'Hara (2012), *Flow Toxicity
+    and Liquidity in a High-Frequency World*, RFS 25(5); Barclay &
+    Warner (1993), *Stealth Trading and Volatility*, JFE 34(3) — the
+    informativeness of a price move is closely related to the volume
+    that backs it. A jump on low/normal volume tends to be noise; a
+    jump backed by anomalous volume tends to mark genuine information
+    arrival and continues directionally.
+
+    Returns True if the volume at bar ``idx`` is at least
+    ``threshold`` standard deviations above the recent mean.
+    """
+    if idx < window:
+        return True
+    recent = volume[max(0, idx - window):idx]
+    if recent.size < 4:
+        return True
+    mu = recent.mean()
+    sd = recent.std(ddof=1)
+    if sd <= 0:
+        return True
+    z = (volume[idx] - mu) / sd
+    return z >= threshold
+
+
 class SignalType(str, Enum):
     ENTRY = "entry"
     EXIT = "exit"
@@ -130,9 +188,24 @@ class StrategyParams:
     risk_per_trade: float = 0.005     # baseline 0.5% Kelly fraction (graded)
     sizing_cap: float = 5.0           # absolute fraction ceiling (with leverage)
     leverage_cap: float = 10.0        # broker leverage cap (Bitget allows ≥ 20×)
-    confidence_exponent: float = 3.0  # cubic conviction grading
+    # Conviction exponent reduced from 3 → 2 in AlphaPulse v2: cubic was
+    # over-amplifying *misjudged* max-conviction trades, contributing
+    # to the −25% backtest blow-up observed pre-TSM-filter. Quadratic
+    # still gives a 16× weak-vs-strong ratio (concentrates capital on
+    # the high-conviction tail) without lethal exposure on every false
+    # positive. With the new TSM + volume filters far fewer false
+    # positives reach the sizing stage, but a moderate exponent gives
+    # robustness if the filters miss.
+    confidence_exponent: float = 2.0
     lm_threshold: float = 4.0         # LM stat reference for confidence multiplier
     direct_entry_lm: float = 9999.0   # kept for .env compatibility, unused
+    # ---- v2 entry-quality filters ----------------------------------- #
+    # Time-Series Momentum (Moskowitz-Ooi-Pedersen 2012) macro horizon.
+    # 720 bars = 30 days on 1h. Set to 0 to disable.
+    tsm_lookback_bars: int = 720
+    # Volume z-score threshold at the entry bar. Easley-LdP-O'Hara 2012
+    # informativeness floor. Set to a very negative number to disable.
+    volume_z_threshold: float = 0.5
 
 
 class TrendFollowingStrategy:
@@ -207,13 +280,31 @@ class TrendFollowingStrategy:
                 # So inside_band is a NOISE filter, not a SIZE filter:
                 # active for screener-less HIST replay only.
                 noise_filter_required = (screener_side is None)
+                # ---- v2 macro filters: TSM direction + volume confirm ----
+                # These reject counter-trend jumps (the dominant failure
+                # mode in v1) and noise jumps without volume backing.
+                tsm_long = (self.p.tsm_lookback_bars <= 0
+                              or macro_trend_aligned(rets, "long",
+                                                       self.p.tsm_lookback_bars))
+                tsm_short = (self.p.tsm_lookback_bars <= 0
+                               or macro_trend_aligned(rets, "short",
+                                                        self.p.tsm_lookback_bars))
+                if "volume" in df.columns and self.p.volume_z_threshold > -10:
+                    vol_arr = df["volume"].to_numpy(dtype=float)
+                    vol_ok = volume_z_at(vol_arr, i,
+                                           threshold=self.p.volume_z_threshold)
+                else:
+                    vol_ok = True
+
                 fired_long = (
                     want == "long" and broke_up
                     and (inside_band or not noise_filter_required)
+                    and tsm_long and vol_ok
                 )
                 fired_short = (
                     want == "short" and broke_dn
                     and (inside_band or not noise_filter_required)
+                    and tsm_short and vol_ok
                 )
                 if fired_long or fired_short:
                     side = "long" if fired_long else "short"

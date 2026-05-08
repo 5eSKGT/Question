@@ -171,6 +171,54 @@ def test_leverage_scales_with_tight_stops_and_max_conviction():
         f"reaching the leverage range the user demanded.")
 
 
+def test_v2_tsm_filter_rejects_counter_trend_jump():
+    """Moskowitz-Ooi-Pedersen 2012 TSM filter: a +5% jump on the last
+    bar of a series with a 30-day DOWNTREND must NOT fire a long
+    entry — that's a counter-trend dip-bounce, not a real winner."""
+    from crypto_trend.strategy.trend_following import macro_trend_aligned
+    rng = np.random.default_rng(7)
+    # 800-bar series with persistent negative drift
+    rets = rng.normal(-0.001, 0.003, 800)
+    assert bool(macro_trend_aligned(rets, "long", 720)) is False
+    assert bool(macro_trend_aligned(rets, "short", 720)) is True
+    # End-to-end: long jump on a downtrending tape produces no entry
+    # at the jump bar
+    base = 100 * np.exp(np.cumsum(rets))
+    base[-1] = base[-2] * 1.05      # +5% jump
+    df = _ohlcv(base)
+    strat = TrendFollowingStrategy(StrategyParams())
+    sigs = strat.generate_signals(df, screener_side="long",
+                                    source=SignalSource.HIST)
+    last_ts = df.index[-1]
+    last_long = [s for s in sigs
+                 if s.type == SignalType.ENTRY and s.side == "long"
+                 and s.ts == last_ts]
+    assert not last_long, (
+        "TSM filter must reject a long entry on a downtrending tape — "
+        "this is exactly the systematic counter-trend loss the "
+        "Moskowitz-Ooi-Pedersen filter is designed to prevent.")
+
+
+def test_v2_volume_filter_rejects_low_volume_jump():
+    """Easley-LdP-O'Hara 2012: a price jump backed by NORMAL volume is
+    most likely noise; informative jumps come with anomalous volume.
+    A long pick on a +5% move that lacks the volume confirmation
+    must NOT fire entry."""
+    from crypto_trend.strategy.trend_following import volume_z_at
+    rng = np.random.default_rng(0)
+    # volume_z_at uses a 24-bar window before the test index.
+    # Build realistic volume so the last bar sits at exactly that
+    # window's mean → z = 0 → fails 0.5 threshold.
+    realistic = 1000 + rng.normal(0, 100, 50)
+    realistic[-1] = realistic[25:49].mean()
+    assert bool(volume_z_at(realistic, 49, threshold=0.5)) is False
+    # Spiked volume — last bar 5σ above the 24-bar window mean
+    spike = 1000 + rng.normal(0, 100, 50)
+    win = spike[25:49]
+    spike[-1] = win.mean() + 5 * win.std()
+    assert bool(volume_z_at(spike, 49, threshold=0.5)) is True
+
+
 def test_weak_signal_essentially_no_bet():
     """The flip side of cubic conviction grading: weak signals must
     risk almost nothing (the noise-protection benefit)."""

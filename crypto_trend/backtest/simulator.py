@@ -239,14 +239,26 @@ class StrategySimulator:
                 broke_dn = close < lo_prev
                 inside_band = band == 0 or abs(close - pc.closes[t - 1]) <= band
 
-                # AlphaPulse anticipatory entry: the simulator only ever
-                # reaches this branch on screener-confirmed picks
-                # (active_picks gate above), so inside_band is a true
-                # noise filter for HIST-replay paths only — skipped here.
-                # See strategy/trend_following.py for the full Hawkes
-                # rationale (Aït-Sahalia et al. 2014; Lee 2012).
-                fire_long = want == "long" and broke_up
-                fire_short = want == "short" and broke_dn
+                # AlphaPulse v2: macro TSM + volume confirmation. See
+                # strategy/trend_following.py for the rationale; this
+                # block is the simulator-side mirror so backtest = live.
+                from ..strategy.trend_following import (
+                    macro_trend_aligned, volume_z_at)
+                tsm_long_ok = (p.tsm_lookback_bars <= 0
+                                or macro_trend_aligned(pc.log_rets[: t], "long",
+                                                         p.tsm_lookback_bars))
+                tsm_short_ok = (p.tsm_lookback_bars <= 0
+                                 or macro_trend_aligned(pc.log_rets[: t], "short",
+                                                          p.tsm_lookback_bars))
+                vol_arr = candles_aligned[sym]["volume"].to_numpy(dtype=float)
+                vol_ok = (p.volume_z_threshold <= -10
+                            or volume_z_at(vol_arr, t,
+                                            threshold=p.volume_z_threshold))
+
+                fire_long = (want == "long" and broke_up
+                              and tsm_long_ok and vol_ok)
+                fire_short = (want == "short" and broke_dn
+                               and tsm_short_ok and vol_ok)
                 if not (fire_long or fire_short):
                     continue
 
