@@ -169,7 +169,18 @@ class PaperBroker:
     def fetch_tickers(self, symbols: list[str] | None = None) -> dict[str, dict]:
         if self.market is None:
             return {}
-        return self.market.fetch_tickers(symbols)
+        tickers = self.market.fetch_tickers(symbols)
+        # Keep paper-mode mark-to-market price fresh for every symbol we know
+        # about, even if its OHLCV was not downloaded this cycle.
+        for sym, t in tickers.items():
+            last = t.get("last") or t.get("close") or t.get("info", {}).get("last")
+            if last is None:
+                continue
+            try:
+                self._last_price[sym] = float(last)
+            except (TypeError, ValueError):
+                pass
+        return tickers
 
     def fetch_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 500) -> pd.DataFrame:
         if self.market is None:

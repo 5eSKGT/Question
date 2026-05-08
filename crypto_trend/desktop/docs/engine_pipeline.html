@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>AlphaPulse · 엔진 / 매매 제어 파이프라인</title>
+<style>
+  :root {
+    --green:#1faa59; --red:#d2474d; --gray:#7a8085;
+    --accent:#2654f0; --accent-deep:#0c248c;
+    --surface:#ffffff; --bg:#f6f8fa; --border:#e3e7ec;
+    --text:#1f2329; --sub:#586069;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:'Segoe UI','Apple SD Gothic Neo',-apple-system,sans-serif;
+    line-height:1.65;font-size:14px;padding:32px 36px 64px}
+  h1{font-size:26px;margin:0 0 4px;font-weight:700}
+  h2{font-size:18px;margin:34px 0 10px;font-weight:600;
+    border-left:4px solid var(--accent);padding-left:10px}
+  h3{font-size:15px;margin:18px 0 8px;color:var(--accent-deep)}
+  .lead{color:var(--sub);margin:0 0 20px}
+  .card{background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;padding:20px 22px;margin:14px 0;
+    box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  table{border-collapse:collapse;width:100%;margin:8px 0}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);
+    font-size:13px;vertical-align:top}
+  th{background:#f3f6fa;color:var(--sub);font-weight:600}
+  code{font-family:'JetBrains Mono','Consolas',monospace;
+    background:#eef2f7;padding:1px 6px;border-radius:4px;font-size:12.5px}
+  pre{background:#0c1429;color:#e8edf5;border-radius:8px;
+    padding:14px 16px;overflow-x:auto;font-size:12.5px}
+  .pill{display:inline-block;padding:2px 9px;border-radius:11px;
+    font-size:12px;font-weight:600}
+  .pillOK{background:#e8f8ee;color:var(--green)}
+  .pillWarn{background:#fff4e0;color:#a05a00}
+  .pillBad{background:#fde6e7;color:var(--red)}
+  .pillInfo{background:#eaf2ff;color:var(--accent-deep)}
+  .diagram{background:#fff;border:1px solid var(--border);
+    border-radius:14px;padding:18px 8px;margin:14px 0;overflow-x:auto}
+  .note{background:#fff8e1;border-left:4px solid #f0a000;
+    padding:10px 14px;border-radius:6px;color:#664500;margin:10px 0}
+  .danger{background:#fde6e7;border-left:4px solid var(--red);
+    padding:10px 14px;border-radius:6px;color:#7a1d20;margin:10px 0}
+  ul{margin:6px 0 6px 20px}
+  li{margin:4px 0}
+</style>
+</head>
+<body>
+
+<h1>⚙ 엔진 / 매매 제어 — 작동 원리</h1>
+<p class="lead">
+  AlphaPulse 는 Bitget USDT-Perp 시장에서 갑작스럽게 급등 / 급락하는 심볼
+  (WINNER / LOSER) 을 횡단면 스크리너로 골라낸 뒤, CVaR 하한을 강제하면서
+  추세추종으로 진입·청산하는 자동매매 시스템입니다. 매 사이클이 어떻게
+  돌아가고 OOS 자가보정이 어떻게 매매를 보호하는지 한 번에 파악할 수 있도록
+  E2E 파이프라인을 먼저 시각화하고, 각 단계의 디테일을 아래에서 풀어냅니다.
+</p>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>한 눈에 보는 전체 파이프라인</h2>
+<div class="diagram">
+<svg viewBox="0 0 1180 600" width="100%" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9"
+      markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2654f0"/>
+    </marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9"
+      markerHeight="9" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d2474d"/>
+    </marker>
+    <linearGradient id="boxA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eaf2ff"/><stop offset="1" stop-color="#cfd8ff"/>
+    </linearGradient>
+    <linearGradient id="boxB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e8f8ee"/><stop offset="1" stop-color="#cdf0d9"/>
+    </linearGradient>
+    <linearGradient id="boxC" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff4e0"/><stop offset="1" stop-color="#ffe0b3"/>
+    </linearGradient>
+    <linearGradient id="boxD" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fde6e7"/><stop offset="1" stop-color="#fac4c7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Row 1 — Data ingest -->
+  <g>
+    <rect x="20"  y="20" width="170" height="56" rx="10" fill="url(#boxA)" stroke="#2654f0"/>
+    <text x="105" y="46" text-anchor="middle" font-weight="700" font-size="13">Bitget API</text>
+    <text x="105" y="64" text-anchor="middle" font-size="11" fill="#1f2329">Universe + Tickers</text>
+
+    <rect x="220" y="20" width="170" height="56" rx="10" fill="url(#boxA)" stroke="#2654f0"/>
+    <text x="305" y="46" text-anchor="middle" font-weight="700" font-size="13">Pre-filter</text>
+    <text x="305" y="64" text-anchor="middle" font-size="11">24h 거래대금 ≥ $5M</text>
+
+    <rect x="420" y="20" width="170" height="56" rx="10" fill="url(#boxA)" stroke="#2654f0"/>
+    <text x="505" y="46" text-anchor="middle" font-weight="700" font-size="13">OHLCV 1h × 500</text>
+    <text x="505" y="64" text-anchor="middle" font-size="11">REST 다운로드</text>
+
+    <rect x="620" y="20" width="180" height="56" rx="10" fill="url(#boxB)" stroke="#1faa59"/>
+    <text x="710" y="44" text-anchor="middle" font-weight="700" font-size="13">횡단면 스크리너</text>
+    <text x="710" y="62" text-anchor="middle" font-size="11">robust-z · Hurst · vol</text>
+
+    <rect x="830" y="20" width="180" height="56" rx="10" fill="url(#boxB)" stroke="#1faa59"/>
+    <text x="920" y="44" text-anchor="middle" font-weight="700" font-size="13">전략 신호 생성</text>
+    <text x="920" y="62" text-anchor="middle" font-size="11">Donchian × YZ band</text>
+
+    <line x1="190" y1="48" x2="220" y2="48" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="390" y1="48" x2="420" y2="48" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="590" y1="48" x2="620" y2="48" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="800" y1="48" x2="830" y2="48" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- Row 2 — Sizing + execution -->
+  <g>
+    <rect x="830" y="120" width="180" height="56" rx="10" fill="url(#boxC)" stroke="#a05a00"/>
+    <text x="920" y="146" text-anchor="middle" font-weight="700" font-size="13">CVaR 하한 사이징</text>
+    <text x="920" y="164" text-anchor="middle" font-size="11">CF 4-moment expansion</text>
+
+    <rect x="620" y="120" width="180" height="56" rx="10" fill="url(#boxC)" stroke="#a05a00"/>
+    <text x="710" y="142" text-anchor="middle" font-weight="700" font-size="13">Broker 라우팅</text>
+    <text x="710" y="160" text-anchor="middle" font-size="11">paper | live (ccxt)</text>
+
+    <rect x="420" y="120" width="170" height="56" rx="10" fill="url(#boxC)" stroke="#a05a00"/>
+    <text x="505" y="142" text-anchor="middle" font-weight="700" font-size="13">Portfolio 갱신</text>
+    <text x="505" y="160" text-anchor="middle" font-size="11">자산 / 포지션 / 메시지</text>
+
+    <line x1="920" y1="76"  x2="920" y2="120" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="830" y1="148" x2="800" y2="148" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="620" y1="148" x2="590" y2="148" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- Row 3 — OOS + outcomes -->
+  <g>
+    <rect x="420" y="220" width="340" height="60" rx="10" fill="url(#boxD)" stroke="#d2474d"/>
+    <text x="590" y="245" text-anchor="middle" font-weight="700" font-size="14">OOS 게이트</text>
+    <text x="590" y="265" text-anchor="middle" font-size="11">PSR ≥ 0.80   ·   SR ≥ 0.5   ·   DSR (multiple-testing penalty)</text>
+
+    <line x1="505" y1="176" x2="505" y2="220" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+    <text x="540" y="200" font-size="11" fill="#0c248c">test window</text>
+
+    <!-- branches -->
+    <rect x="50"  y="340" width="220" height="60" rx="10" fill="#e8f8ee" stroke="#1faa59"/>
+    <text x="160" y="364" text-anchor="middle" font-weight="700" font-size="13" fill="#0d6e3a">PASS</text>
+    <text x="160" y="384" text-anchor="middle" font-size="11" fill="#1f3327">파라미터 유지 → 다음 사이클</text>
+
+    <rect x="320" y="340" width="240" height="60" rx="10" fill="#fff4e0" stroke="#a05a00"/>
+    <text x="440" y="364" text-anchor="middle" font-weight="700" font-size="13" fill="#a05a00">RECALIBRATE</text>
+    <text x="440" y="384" text-anchor="middle" font-size="11" fill="#3d2700">격자(breakout × ATR × chand) 탐색</text>
+
+    <rect x="610" y="340" width="220" height="60" rx="10" fill="#fde6e7" stroke="#d2474d"/>
+    <text x="720" y="364" text-anchor="middle" font-weight="700" font-size="13" fill="#7a1d20">HALT</text>
+    <text x="720" y="384" text-anchor="middle" font-size="11" fill="#5b1518">매매 중단 + 사용자 경고 알림</text>
+
+    <rect x="880" y="340" width="240" height="60" rx="10" fill="#eaf2ff" stroke="#2654f0"/>
+    <text x="1000" y="364" text-anchor="middle" font-weight="700" font-size="13" fill="#0c248c">PENDING</text>
+    <text x="1000" y="384" text-anchor="middle" font-size="11" fill="#1c2645">표본 부족 (n &lt; 16) → 판정 보류</text>
+
+    <line x1="500" y1="280" x2="160" y2="340" stroke="#1faa59" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="590" y1="280" x2="440" y2="340" stroke="#a05a00" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="690" y1="280" x2="720" y2="340" stroke="#d2474d" stroke-width="2" marker-end="url(#arrR)"/>
+    <line x1="760" y1="280" x2="1000" y2="340" stroke="#2654f0" stroke-width="2" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- back arrows from RECAL to engine -->
+  <path d="M 440 400 Q 200 480 200 100 Q 200 20 1010 28"
+    fill="none" stroke="#a05a00" stroke-width="1.6" stroke-dasharray="6 5"
+    marker-end="url(#arr)"/>
+  <text x="940" y="20" font-size="11" fill="#a05a00" text-anchor="end">새 파라미터로 재진입</text>
+
+  <!-- HALT path to UI -->
+  <rect x="610" y="450" width="220" height="56" rx="10" fill="#fde6e7" stroke="#d2474d"/>
+  <text x="720" y="475" text-anchor="middle" font-weight="700" font-size="13" fill="#7a1d20">⚠ 사용자 알림 다이얼로그</text>
+  <text x="720" y="494" text-anchor="middle" font-size="11" fill="#5b1518">+ HALT 카드 빨간색</text>
+  <line x1="720" y1="400" x2="720" y2="450" stroke="#d2474d" stroke-width="2" marker-end="url(#arrR)"/>
+
+  <!-- legend -->
+  <g transform="translate(20, 540)">
+    <rect width="14" height="14" fill="url(#boxA)" stroke="#2654f0"/>
+    <text x="22" y="12" font-size="11">데이터 수집</text>
+    <rect x="120" width="14" height="14" fill="url(#boxB)" stroke="#1faa59"/>
+    <text x="142" y="12" font-size="11">시그널 생성</text>
+    <rect x="240" width="14" height="14" fill="url(#boxC)" stroke="#a05a00"/>
+    <text x="262" y="12" font-size="11">실행 / 자산</text>
+    <rect x="360" width="14" height="14" fill="url(#boxD)" stroke="#d2474d"/>
+    <text x="382" y="12" font-size="11">OOS 검증</text>
+  </g>
+</svg>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>전략 타깃 — 무엇을 매매하는가</h2>
+<div class="card">
+<p>
+  Bitget USDT-Perp 전체 상장 심볼 중에서 <strong>지금 막 비정상적으로 큰
+  방향성 움직임을 시작한 종목</strong>만 골라 추세추종으로 들어갑니다.
+  단순 절대 수익률이 큰 종목이 아니라, 자기 과거 변동성 대비 그리고 동시점
+  유니버스 대비 두 축 모두에서 통계적으로 극단인 종목입니다.
+</p>
+<ul>
+  <li>WINNER : robust-z &gt; 0 &amp; Donchian 상단 돌파 → <strong>롱</strong></li>
+  <li>LOSER  : robust-z &lt; 0 &amp; Donchian 하단 돌파 → <strong>숏</strong></li>
+  <li>둘 다 Hurst &gt; 0.55 ("지속성") 와 거래대금 ≥ $5M 통과 필요</li>
+</ul>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>스크리너 (학술적 근거)</h2>
+<table>
+  <tr><th>지표</th><th>출처</th><th>역할</th></tr>
+  <tr><td>Robust z-score (median / MAD)</td>
+      <td>Huber 1981; Rousseeuw &amp; Croux 1993</td>
+      <td>이상치(가짜 펌프 1틱)에 휘둘리지 않는 변동성 정규화</td></tr>
+  <tr><td>Hurst exponent (R/S)</td><td>Mandelbrot</td>
+      <td>현재 움직임이 추세 지속형(H&gt;0.55)인지, 평균회귀형인지 판별</td></tr>
+  <tr><td>log-quote-volume</td><td>—</td>
+      <td>유동성 플로어. 슬리피지가 CVaR 을 압도하는 종목 제외</td></tr>
+  <tr><td>composite = w₁·z + w₂·(H-0.5)·sign(z)</td><td>—</td>
+      <td>방향성과 지속성을 합쳐 정렬, 상위 N 만 채택</td></tr>
+</table>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>전략 — 진입 / 청산</h2>
+<div class="grid">
+<div class="card">
+  <h3>진입 조건</h3>
+  <ul>
+    <li><strong>Donchian 돌파</strong> — close 가 직전 N봉(기본 20) 의 최고/최저를 돌파</li>
+    <li><strong>Yang–Zhang 파동 밴드 안</strong> — Yang &amp; Zhang 2000 의 드리프트 독립
+      OHLC 변동성 추정으로 정상 범위 안의 이동만 허용
+      (gap-up 같은 1틱 폭주는 거른다)</li>
+    <li><strong>스크리너 방향과 일치</strong></li>
+  </ul>
+</div>
+<div class="card">
+  <h3>청산 조건 (선착순)</h3>
+  <ul>
+    <li><strong>Chandelier 트레일링</strong> — Le Beau, peak/trough 에서 mult·ATR 만큼 떨어진 지점</li>
+    <li><strong>시간 스톱</strong> — <code>time_stop_bars</code>(기본 48 = 2일) 동안 진전 없으면 청산</li>
+    <li><strong>실현 CVaR 하한 위반</strong> — 최근 64봉 포지션 정합 P&amp;L의 5% 분위수가 하한 아래로 내려가면 청산</li>
+  </ul>
+</div>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>리스크 — CVaR (Expected Shortfall)</h2>
+<div class="card">
+<p>
+  포지션 사이즈는 <strong>Acerbi &amp; Tasche (2002)</strong> 의 historical CVaR 과
+  <strong>Cornish–Fisher 4-moment 확장</strong> (Favre &amp; Galeano 2002) 을 함께
+  사용합니다. 표본이 부족할 때 CF 가 정규성 가정을 비대칭/꼬리로 보정해
+  과소·과대 추정을 둘 다 줄입니다.
+</p>
+<pre>
+f* = max(0, min( cvar_floor / cvar_α(returns),  position_cap,  leverage_cap ))</pre>
+<p>
+  <code>cvar_floor</code> 는 음수(예 -0.08 = ES 5% 가 -8% 이상이어야 진입). f* 가 0
+  이면 진입을 포기합니다 — "사이즈가 0" 이 곧 "이번 신호는 통과 불가" 라는 뜻.
+</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>OOS 자가보정 — 이게 안전장치의 핵심</h2>
+<div class="card">
+<p>
+  매 사이클 끝에 가장 최근 <code>walk_forward_test_days</code> 일치 데이터를
+  out-of-sample 로 보고, 이 기간에 현재 파라미터 그대로 시뮬레이션했을 때의
+  바별 수익률을 뽑습니다. 그 위에서:
+</p>
+<ul>
+  <li><strong>Probabilistic Sharpe Ratio</strong> (Bailey &amp; López de Prado 2012) —
+    표본 사이즈, 왜도, 첨도까지 반영한 Sharpe 의 신뢰도</li>
+  <li><strong>Deflated Sharpe Ratio</strong> (BLP 2014) — 다중 테스트 보정</li>
+</ul>
+<p>이후 4가지 결과 중 하나가 나옵니다:</p>
+<table>
+  <tr><th>판정</th><th>조건</th><th>행동</th></tr>
+  <tr><td><span class="pill pillOK">OK</span></td>
+      <td>PSR ≥ 0.80 그리고 SR ≥ 0.5</td>
+      <td>현재 파라미터 유지, 다음 사이클로 진입</td></tr>
+  <tr><td><span class="pill pillInfo">PENDING</span></td>
+      <td>표본 부족 (n &lt; 16)</td>
+      <td>판정 보류 — 매매도 보정도 안 함, 데이터 더 모음</td></tr>
+  <tr><td><span class="pill pillWarn">RECALIBRATED</span></td>
+      <td>처음에는 fail 이었지만 격자 탐색 후 통과한 파라미터 발견</td>
+      <td>새 파라미터로 교체 + 메시지 로그에 기록</td></tr>
+  <tr><td><span class="pill pillBad">HALTED</span></td>
+      <td><code>RECALIBRATION_MAX_ATTEMPTS</code> 안에 통과 못함</td>
+      <td>매매 자동 중단 + 다이얼로그 + HALT 카드 빨간색</td></tr>
+</table>
+<p class="danger">
+  HALT 가 발생하면 <strong>새 주문은 나가지 않고</strong>, 사용자가 GUI 에서
+  ▶재개 를 눌러야만 다시 매매가 시작됩니다.
+</p>
+</div>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>모드 분기 — Paper vs Live</h2>
+<table>
+  <tr><th>—</th><th>Paper</th><th>Live</th></tr>
+  <tr><td>API 키</td><td>불필요</td><td>OS 보안저장소(자격 증명 관리자/Keychain) 에 저장된 값을 사용</td></tr>
+  <tr><td>주문 라우팅</td><td>메모리 내 시뮬레이션 (수수료 6 bps 반영)</td>
+      <td>ccxt 를 통해 Bitget USDT-Perp 에 실제 전송</td></tr>
+  <tr><td>가격</td><td>Bitget 시세 그대로 사용</td><td>Bitget 시세 그대로 사용</td></tr>
+  <tr><td>안전장치</td><td>—</td>
+      <td>시작 시 확인 다이얼로그, API 키 누락 시 시작 차단</td></tr>
+</table>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>매매 제어 — 사용자가 누를 수 있는 버튼</h2>
+<table>
+  <tr><th>버튼</th><th>의도</th><th>내부 동작</th></tr>
+  <tr><td>▶ 엔진 시작</td><td>새 사이클 루프 가동</td>
+      <td>EngineWorker(QThread) 시작 → run_once() 무한 반복</td></tr>
+  <tr><td>■ 엔진 정지</td><td>사이클 중단</td>
+      <td>worker.stop() → 1초 안에 빠져나옴, 자격증명 메모리에서 제거</td></tr>
+  <tr><td>⏸ 매매 중단</td><td>주문만 막고 모니터링은 계속</td>
+      <td>portfolio.halt("사용자 수동 중단")</td></tr>
+  <tr><td>▶ 재개</td><td>중단 해제</td>
+      <td>portfolio.resume()</td></tr>
+  <tr><td>🔐 자격증명 설정</td><td>API 키를 OS 보안저장소에 저장</td>
+      <td>모달 다이얼로그 → keyring → 즉시 다이얼로그 닫고 입력 필드 wipe</td></tr>
+</table>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>파라미터 레퍼런스</h2>
+<table>
+  <tr><th>이름</th><th>기본</th><th>의미</th></tr>
+  <tr><td><code>screener.lookback</code></td><td>24</td>
+      <td>robust-z 산출에 쓰는 최근 봉 수 (1h 기준 = 1일)</td></tr>
+  <tr><td><code>screener.z_threshold</code></td><td>2.5</td>
+      <td>이 |z| 이하면 후보 탈락</td></tr>
+  <tr><td><code>screener.hurst_floor</code></td><td>0.55</td>
+      <td>지속성 지수 하한 — 평균회귀 종목 제외</td></tr>
+  <tr><td><code>strategy.breakout_n</code></td><td>20</td>
+      <td>Donchian 룩백 봉 수</td></tr>
+  <tr><td><code>strategy.atr_n</code></td><td>14</td>
+      <td>Chandelier 트레일링에 쓰는 ATR 기간</td></tr>
+  <tr><td><code>strategy.chandelier_mult</code></td><td>3.0</td>
+      <td>peak/trough 에서 청산까지 거리 (ATR 배수)</td></tr>
+  <tr><td><code>strategy.yz_n</code></td><td>20</td>
+      <td>Yang–Zhang 변동성 룩백</td></tr>
+  <tr><td><code>strategy.band_mult</code></td><td>1.5</td>
+      <td>1봉 이동 허용 폭 = band_mult × YZ_vol × close</td></tr>
+  <tr><td><code>strategy.time_stop_bars</code></td><td>48</td>
+      <td>이 기간 동안 진전 없으면 시간 스톱</td></tr>
+  <tr><td><code>cvar_alpha</code></td><td>0.05</td>
+      <td>Expected Shortfall 분위수</td></tr>
+  <tr><td><code>cvar_floor_pct</code></td><td>-0.08</td>
+      <td>한 포지션의 ES_5% 하한 (음수)</td></tr>
+  <tr><td><code>max_gross_leverage</code></td><td>3.0</td>
+      <td>총 명목 / 자기자본 상한</td></tr>
+  <tr><td><code>walk_forward_test_days</code></td><td>7</td>
+      <td>OOS 평가 윈도우 길이</td></tr>
+  <tr><td><code>recalibration_max_attempts</code></td><td>3</td>
+      <td>이 횟수 안에 통과 못하면 HALT</td></tr>
+</table>
+
+<!-- ────────────────────────────────────────────────────────────────── -->
+<h2>한 트레이드의 일생 — 시간 순</h2>
+<div class="card">
+<ol>
+  <li><strong>t-Δ</strong>: 사이클 시작 → 유니버스/티커 갱신 → 거래대금 프리필터</li>
+  <li><strong>t</strong>: 캔들 다운로드 → 스크리너 실행 → 상위 N 후보 도출</li>
+  <li>각 후보의 전체 캔들 구간에서 strategy.generate_signals(...) 재시뮬레이션
+    → A 그룹 신호 생성</li>
+  <li>가장 최근 봉의 신호는 C 그룹으로 격상</li>
+  <li>C 가 ENTRY 면 CVaR 사이즈로 주문 발사 → 체결시 B 그룹 신호 추가 +
+    "ENTRY LONG ETH/USDT @ ..." 메시지(녹색)</li>
+  <li>다음 사이클부터는 같은 포지션을 모니터링하며 청산 조건을 검사. 청산
+    체결 시 B 그룹 EXIT + "EXIT ... pnl=+12.34 USDT" (녹색/빨강)</li>
+  <li>매 사이클 끝: OOS 평가 → OK / PENDING / RECALIBRATED / HALTED</li>
+</ol>
+</div>
+
+<p class="note">
+  더 깊은 코드 레벨 디테일은 저장소의
+  <code>crypto_trend/execution/engine.py</code>,
+  <code>crypto_trend/strategy/trend_following.py</code>,
+  <code>crypto_trend/oos/adaptive.py</code> 를 참고하세요. 각 함수에 docstring 으로
+  학술적 근거와 의도가 명시되어 있습니다.
+</p>
+
+</body>
+</html>

@@ -11,16 +11,19 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QPalette, QPixmap
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFrame,
                                 QGraphicsDropShadowEffect, QHBoxLayout,
-                                QLabel, QLineEdit, QListWidget,
-                                QListWidgetItem, QMainWindow, QMessageBox,
-                                QPushButton, QSizePolicy, QSpinBox,
-                                QStatusBar, QVBoxLayout, QWidget)
+                                QLabel, QListWidget, QListWidgetItem,
+                                QMainWindow, QMessageBox, QPushButton,
+                                QSizePolicy, QSpinBox, QStatusBar,
+                                QVBoxLayout, QWidget)
 
 from .. import config
-from ..config import SETTINGS, TradingMode
+from ..config import DOCS_DIR, SETTINGS, TradingMode
 from ..portfolio.state import PortfolioState
 from ..strategy.trend_following import StrategyParams
 from .chart_view import SignalChartView
+from .credentials import CredentialStore
+from .credentials_dialog import CredentialsDialog
+from .help_dialog import HelpDialog
 from .theme import (ACCENT, BORDER, GRAY, GREEN, QSS, RED, SUBTEXT, SURFACE,
                     TEXT, background_path, color_for_delta, icon_path)
 from .workers import EngineWorker
@@ -57,6 +60,7 @@ class AlphaPulseWindow(QMainWindow):
         self.portfolio.equity_usdt = SETTINGS.base_equity_usdt
         self.portfolio.mode = SETTINGS.mode.value
         self.worker: EngineWorker | None = None
+        self.credentials_store = CredentialStore()
 
         self._set_background()
         self._build_ui()
@@ -190,8 +194,14 @@ class AlphaPulseWindow(QMainWindow):
         v.setContentsMargins(20, 18, 20, 18)
         v.setSpacing(10)
 
+        head_row = QHBoxLayout()
         head = QLabel("⚙  엔진 제어"); head.setObjectName("h2")
-        v.addWidget(head)
+        head_row.addWidget(head)
+        head_row.addStretch(1)
+        head_row.addWidget(self._info_button(
+            "engine_pipeline.html",
+            "엔진 / 매매 제어 — 작동 원리"))
+        v.addLayout(head_row)
 
         # Mode picker
         v.addWidget(self._caption("거래 모드"))
@@ -201,19 +211,23 @@ class AlphaPulseWindow(QMainWindow):
         self.mode_combo.currentIndexChanged.connect(self._on_mode_change)
         v.addWidget(self.mode_combo)
 
-        # Credentials
-        self.api_key_edit = QLineEdit(SETTINGS.api_key)
-        self.api_key_edit.setPlaceholderText("Bitget API Key")
-        self.api_secret_edit = QLineEdit(SETTINGS.api_secret)
-        self.api_secret_edit.setPlaceholderText("API Secret")
-        self.api_secret_edit.setEchoMode(QLineEdit.Password)
-        self.api_pass_edit = QLineEdit(SETTINGS.api_passphrase)
-        self.api_pass_edit.setPlaceholderText("API Passphrase")
-        self.api_pass_edit.setEchoMode(QLineEdit.Password)
+        # Credentials — never displayed in plaintext on the main window.
         v.addWidget(self._caption("API 자격증명 (live 모드 전용)"))
-        v.addWidget(self.api_key_edit)
-        v.addWidget(self.api_secret_edit)
-        v.addWidget(self.api_pass_edit)
+        self.creds_status = QLabel()
+        self.creds_status.setWordWrap(True)
+        self.creds_status.setStyleSheet(f"color:{GRAY}; padding:4px 0;")
+        v.addWidget(self.creds_status)
+        creds_row = QHBoxLayout()
+        self.btn_set_creds = QPushButton("🔐 설정 / 변경")
+        self.btn_set_creds.setObjectName("ghost")
+        self.btn_set_creds.clicked.connect(self._on_set_credentials)
+        self.btn_clear_creds = QPushButton("삭제")
+        self.btn_clear_creds.setObjectName("ghost")
+        self.btn_clear_creds.clicked.connect(self._on_clear_credentials)
+        creds_row.addWidget(self.btn_set_creds)
+        creds_row.addWidget(self.btn_clear_creds)
+        v.addLayout(creds_row)
+        self._refresh_creds_status()
 
         # Strategy params
         v.addWidget(self._caption("전략 파라미터"))
@@ -248,6 +262,20 @@ class AlphaPulseWindow(QMainWindow):
     def _caption(self, txt: str) -> QLabel:
         l = QLabel(txt); l.setObjectName("caption"); return l
 
+    def _info_button(self, doc_filename: str, title: str) -> QPushButton:
+        """Small ⓘ button that opens a bundled HTML doc in a HelpDialog."""
+        btn = QPushButton("ⓘ")
+        btn.setObjectName("info")
+        btn.setFixedSize(28, 28)
+        btn.setToolTip(f"설명 보기 — {title}")
+        btn.clicked.connect(lambda: self._open_help(doc_filename, title))
+        return btn
+
+    def _open_help(self, doc_filename: str, title: str) -> None:
+        path = DOCS_DIR / doc_filename
+        dlg = HelpDialog(self, path, title)
+        dlg.exec()
+
     def _spin_int(self, label: str, lo: int, hi: int, val: int) -> QWidget:
         w = QWidget(); h = QHBoxLayout(w); h.setContentsMargins(0, 0, 0, 0)
         lbl = QLabel(label); lbl.setObjectName("caption"); lbl.setMinimumWidth(160)
@@ -280,9 +308,12 @@ class AlphaPulseWindow(QMainWindow):
         v.setSpacing(8)
 
         head = QHBoxLayout()
-        title = QLabel("📈 신호 차트 — A/B/C 일관 랜더링")
+        title = QLabel("📈 신호 차트")
         title.setObjectName("h2")
         head.addWidget(title)
+        head.addWidget(self._info_button(
+            "chart_signals.html",
+            "신호 차트 — A/B/C 일관 랜더링"))
         head.addStretch(1)
         head.addWidget(self._caption("심볼"))
         self.symbol_combo = QComboBox()
@@ -290,14 +321,6 @@ class AlphaPulseWindow(QMainWindow):
         self.symbol_combo.currentTextChanged.connect(lambda _t: self._render_chart())
         head.addWidget(self.symbol_combo)
         v.addLayout(head)
-
-        legend = QLabel(
-            "  A · 과거에 매매했더라면 발생했을/실제 매매 신호      "
-            "B · 현재 매매중인 심볼의 진입/청산      "
-            "C · OOS 입력으로 신규 트리거 (외곽 링 강조)")
-        legend.setObjectName("caption")
-        legend.setWordWrap(True)
-        v.addWidget(legend)
 
         self.chart = SignalChartView()
         v.addWidget(self.chart, 1)
@@ -328,27 +351,63 @@ class AlphaPulseWindow(QMainWindow):
         self.portfolio.mode = new_mode.value
 
     def _gather_settings(self) -> bool:
-        """Push GUI values into config.SETTINGS. Returns False if invalid."""
+        """Push GUI values into config.SETTINGS. Returns False if invalid.
+
+        Credentials are *only* loaded from the OS keyring, never from any
+        widget on the main window.  They live in ``SETTINGS`` for the
+        duration of an engine run and are wiped on stop.
+        """
         mode = TradingMode.LIVE if self.mode_combo.currentIndex() == 1 else TradingMode.PAPER
-        if mode == TradingMode.LIVE and not (
-                self.api_key_edit.text() and self.api_secret_edit.text()
-                and self.api_pass_edit.text()):
-            QMessageBox.warning(self, "API 키 누락",
-                                "live 모드에는 API key/secret/passphrase 가 모두 필요합니다.")
+        creds = self.credentials_store.load()
+        if mode == TradingMode.LIVE and not creds.is_complete:
+            QMessageBox.warning(
+                self, "API 키 미설정",
+                "live 모드에는 Bitget API 자격증명이 필요합니다. "
+                "🔐 설정 / 변경 버튼을 눌러 OS 보안 저장소에 먼저 저장해 주세요.")
             return False
         config.apply(
             mode=mode,
-            api_key=self.api_key_edit.text().strip(),
-            api_secret=self.api_secret_edit.text().strip(),
-            api_passphrase=self.api_pass_edit.text().strip(),
+            api_key=creds.api_key,
+            api_secret=creds.api_secret,
+            api_passphrase=creds.api_passphrase,
             cvar_floor_pct=float(self._val(self.cvar_spin)),
             max_gross_leverage=float(self._val(self.lev_spin)),
             base_equity_usdt=float(self._val(self.equity_spin)),
         )
+        # We do NOT keep credentials in the local Credentials object after this.
+        creds.wipe()
         self.portfolio.mode = mode.value
         if self.portfolio.equity_usdt <= 0:
             self.portfolio.equity_usdt = SETTINGS.base_equity_usdt
         return True
+
+    # ---- credential handlers ----------------------------------------- #
+    def _refresh_creds_status(self) -> None:
+        configured = self.credentials_store.is_configured()
+        backend = self.credentials_store.backend_name
+        if configured:
+            self.creds_status.setText(f"✓ 설정됨 ({backend})")
+            self.creds_status.setStyleSheet(f"color:{GREEN}; padding:4px 0;")
+        else:
+            self.creds_status.setText(f"미설정 — live 모드 전 설정 필요\n저장소: {backend}")
+            self.creds_status.setStyleSheet(f"color:{GRAY}; padding:4px 0;")
+
+    def _on_set_credentials(self) -> None:
+        # Empty prefill — never re-show the saved key, even masked.
+        dlg = CredentialsDialog(self, self.credentials_store, prefill=None)
+        dlg.exec()
+        self._refresh_creds_status()
+
+    def _on_clear_credentials(self) -> None:
+        confirm = QMessageBox.question(
+            self, "자격증명 삭제",
+            "OS 보안 저장소에서 Bitget 자격증명을 삭제하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.Cancel)
+        if confirm == QMessageBox.Yes:
+            self.credentials_store.clear()
+            # Also wipe whatever might be lingering in SETTINGS.
+            config.apply(api_key="", api_secret="", api_passphrase="")
+            self._refresh_creds_status()
 
     def _on_start(self) -> None:
         if self.worker is not None:
@@ -380,6 +439,9 @@ class AlphaPulseWindow(QMainWindow):
         self.worker.stop()
         self.worker.wait(5000)
         self.worker = None
+        # Wipe credentials from process memory once the engine is no longer
+        # using them. The keyring still holds them for the next run.
+        config.apply(api_key="", api_secret="", api_passphrase="")
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.status_label.setText("엔진 정지됨")
@@ -424,7 +486,8 @@ class AlphaPulseWindow(QMainWindow):
         st = oos.get("status", "—").upper()
         oos_color = (GREEN if st == "OK" else
                      RED if st == "HALTED" else
-                     "#c08a00" if st == "RECALIBRATED" else GRAY)
+                     "#c08a00" if st == "RECALIBRATED" else
+                     "#0c248c" if st == "PENDING" else GRAY)
         self.oos_status.setText(st)
         self.oos_status.setStyleSheet(f"color:{oos_color};")
         self.oos_detail.setText(

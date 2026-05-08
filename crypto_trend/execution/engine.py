@@ -89,6 +89,18 @@ class TradingEngine:
             log.error(f"market-data fetch failed: {e}")
             return
 
+        # Sync the open-position view with the broker's truth at every cycle.
+        # Without this the engine could silently believe a position is still
+        # open after the user manually closed it (live mode), or after the
+        # paper broker has zeroed it via its own logic.
+        try:
+            self._open_positions = {
+                p.symbol: ("long" if p.qty > 0 else "short")
+                for p in self.broker.fetch_positions() if p.qty != 0
+            }
+        except Exception as e:                                       # noqa: BLE001
+            log.debug(f"position sync failed: {e}")
+
         # Limit OHLCV downloads — only for symbols passing a cheap pre-filter.
         prefiltered = [
             s for s in universe
@@ -203,15 +215,23 @@ class TradingEngine:
     # OOS gate
     # ------------------------------------------------------------------ #
     def _run_oos_check(self) -> None:
-        symbols = [s for s, _ in self._open_positions.items()]
+        # Walk-forward window: the most recent K bars are treated as the OOS
+        # test set. Older bars are warmup for the indicators only. This is
+        # what the spec calls "OOS 데이터에 따라 유동적으로 전략을 자동보정".
+        oos_bars = max(SETTINGS.walk_forward_test_days * 24, 24)
+
+        # Prefer evaluating on the symbols we are actually trading; if we have
+        # no live positions yet, evaluate on whatever the screener produced
+        # this cycle so the OOS decision is grounded in current candidates.
+        symbols = list(self._open_positions.keys())
         if not symbols:
-            symbols = [r for r in list(self._candles_cache.keys())[:5]]
+            symbols = list(self._candles_cache.keys())[:10]
         if not symbols:
             return
 
         def _backtest(params: StrategyParams) -> np.ndarray:
             strat = TrendFollowingStrategy(params)
-            equity_returns: list[float] = []
+            tail_returns: list[np.ndarray] = []
             for sym in symbols:
                 df = self._candles_cache.get(sym)
                 if df is None or df.empty:
@@ -219,18 +239,24 @@ class TradingEngine:
                 sigs = strat.generate_signals(df, screener_side=None,
                                               source=SignalSource.HIST)
                 eq = self._returns_from_signals(df, sigs)
+                # Keep only the OOS tail; the head is warmup / in-sample.
+                if eq.size > oos_bars:
+                    eq = eq[-oos_bars:]
                 if eq.size:
-                    equity_returns.append(eq)
-            if not equity_returns:
+                    tail_returns.append(eq)
+            if not tail_returns:
                 return np.array([])
-            min_len = min(arr.size for arr in equity_returns)
-            stacked = np.stack([arr[-min_len:] for arr in equity_returns], axis=0)
+            min_len = min(arr.size for arr in tail_returns)
+            stacked = np.stack([arr[-min_len:] for arr in tail_returns], axis=0)
             return stacked.mean(axis=0)
 
         adaptor = AdaptiveOOS(_backtest)
         try:
             report = adaptor.step(self.strategy.p)
-            self.strategy.p = report.params
+            # Apply new params only if the adaptor actually returned a tuned
+            # set; for OK / PENDING the existing params are kept.
+            if report.status == AdaptiveStatus.RECALIBRATED:
+                self.strategy.p = report.params
             self.portfolio.last_oos = {
                 "status": report.status.value,
                 "sharpe": round(report.sharpe, 3),
@@ -244,6 +270,9 @@ class TradingEngine:
                     text=f"OOS recalibrated — new params SR={report.sharpe:.2f} PSR={report.psr:.2f}",
                     kind="info",
                 ))
+            elif report.status == AdaptiveStatus.PENDING:
+                # No log spam — UI's OOS card already shows PENDING.
+                pass
         except RecalibrationFailed as e:
             self.portfolio.halt(str(e))
             self.portfolio.add_message(TradeMessage(

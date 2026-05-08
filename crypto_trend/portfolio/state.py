@@ -42,7 +42,19 @@ class PortfolioState:
             self.equity_usdt = value
 
     def add_signal(self, sig: Signal) -> None:
+        """Append a signal, deduplicating by (symbol, ts, type, side, source).
+
+        Each cycle re-replays the strategy on the full candle window, so the
+        same (symbol, ts, side, type) HIST entry could appear repeatedly. We
+        suppress the duplicate so the chart and any downstream consumers see
+        each event exactly once.
+        """
+        key = (sig.symbol, sig.ts, sig.type.value, sig.side, sig.source.value)
         with self._lock:
+            for existing in self.signals:
+                if (existing.symbol, existing.ts, existing.type.value,
+                        existing.side, existing.source.value) == key:
+                    return
             self.signals.append(sig)
             self.signals = self.signals[-2000:]
 

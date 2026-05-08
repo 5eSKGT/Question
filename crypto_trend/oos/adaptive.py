@@ -33,8 +33,15 @@ log = get_logger()
 
 class AdaptiveStatus(str, Enum):
     OK = "ok"
+    PENDING = "pending"          # too few samples — defer judgment, do not halt
     RECALIBRATED = "recalibrated"
     HALTED = "halted"
+
+
+# Minimum sample size needed before PSR / SR can be trusted at all. Below this,
+# we deliberately return PENDING so the adaptor neither halts trading nor
+# enters recalibration on noise.
+MIN_SAMPLES = 16
 
 
 @dataclass
@@ -122,6 +129,11 @@ class AdaptiveOOS:
     # ------------------------------------------------------------------ #
     def evaluate(self, params: StrategyParams) -> OOSReport:
         rets = self.backtest(params)
+        if rets.size < MIN_SAMPLES:
+            return OOSReport(status=AdaptiveStatus.PENDING,
+                             sharpe=0.0, psr=0.0, dsr=0.0,
+                             attempts=0, params=params,
+                             message=f"insufficient OOS samples ({rets.size}<{MIN_SAMPLES})")
         sr = annualized_sharpe(rets)
         psr = probabilistic_sharpe_ratio(rets, sr_benchmark=0.0)
         dsr = deflated_sharpe_ratio(rets, n_trials=1)
@@ -157,7 +169,7 @@ class AdaptiveOOS:
     # ------------------------------------------------------------------ #
     def step(self, params: StrategyParams) -> OOSReport:
         report = self.evaluate(params)
-        if report.status == AdaptiveStatus.OK:
+        if report.status in (AdaptiveStatus.OK, AdaptiveStatus.PENDING):
             return report
         log.warning(f"OOS gate failed (PSR={report.psr:.2f}, SR={report.sharpe:.2f}) — recalibrating")
         return self.recalibrate(params)

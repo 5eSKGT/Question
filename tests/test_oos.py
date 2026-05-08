@@ -42,3 +42,14 @@ def test_adaptive_passes_when_strategy_is_strong():
     adaptor = AdaptiveOOS(good_backtest, psr_min=0.5, sharpe_min=0.1)
     rep = adaptor.step(StrategyParams())
     assert rep.status == AdaptiveStatus.OK
+
+
+def test_adaptive_pending_when_too_few_samples():
+    """No data yet → must NOT halt or recalibrate."""
+    def empty_backtest(_p):
+        return np.array([])
+
+    adaptor = AdaptiveOOS(empty_backtest, psr_min=0.99, sharpe_min=2.0,
+                           max_attempts=1)
+    rep = adaptor.step(StrategyParams())
+    assert rep.status == AdaptiveStatus.PENDING

@@ -17,13 +17,16 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 ROOT = Path(os.getcwd()).resolve()
 ASSETS = ROOT / "crypto_trend" / "desktop" / "assets"
+DOCS = ROOT / "crypto_trend" / "desktop" / "docs"
 
 block_cipher = None
 
 datas = [
-    (str(ASSETS / "icon.png"),        "crypto_trend/desktop/assets"),
-    (str(ASSETS / "icon.ico"),        "crypto_trend/desktop/assets"),
-    (str(ASSETS / "background.png"),  "crypto_trend/desktop/assets"),
+    (str(ASSETS / "icon.png"),               "crypto_trend/desktop/assets"),
+    (str(ASSETS / "icon.ico"),               "crypto_trend/desktop/assets"),
+    (str(ASSETS / "background.png"),         "crypto_trend/desktop/assets"),
+    (str(DOCS / "chart_signals.html"),       "crypto_trend/desktop/docs"),
+    (str(DOCS / "engine_pipeline.html"),     "crypto_trend/desktop/docs"),
 ]
 datas += collect_data_files("ccxt")           # ccxt ships symbol metadata
 
@@ -31,6 +34,7 @@ hiddenimports = (
     collect_submodules("ccxt")
     + collect_submodules("plotly")
     + collect_submodules("PySide6.QtWebEngineWidgets")
+    + collect_submodules("keyring")           # OS-keyring backends discovered at runtime
     + ["scipy.special.cython_special"]
 )
 

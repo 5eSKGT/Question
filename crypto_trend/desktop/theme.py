@@ -69,6 +69,13 @@ QPushButton#ghost {{
 }}
 QPushButton#ghost:hover {{ background-color: #eef3ff; }}
 
+QPushButton#info {{
+    background-color: #eef3ff; color: {ACCENT};
+    border: 1px solid #c8d8ff; border-radius: 14px;
+    padding: 0; font-weight: 700; font-size: 13px;
+}}
+QPushButton#info:hover {{ background-color: #dbe6ff; border-color: {ACCENT}; }}
+
 QPushButton#warn   {{ background-color: #f0a000; color: white; }}
 QPushButton#warn:hover {{ background-color: #c98700; }}
 QPushButton#danger {{ background-color: {RED}; color: white; }}

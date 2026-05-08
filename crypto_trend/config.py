@@ -21,6 +21,7 @@ STATE_DIR = PROJECT_ROOT / "state"
 LOG_DIR = PROJECT_ROOT / "logs"
 CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 ASSETS_DIR = Path(__file__).resolve().parent / "desktop" / "assets"
+DOCS_DIR = Path(__file__).resolve().parent / "desktop" / "docs"
 for _d in (STATE_DIR, LOG_DIR, CACHE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
