@@ -58,6 +58,37 @@ def macro_trend_aligned(rets: np.ndarray, side: str,
     return cum_ret < 0
 
 
+def hawkes_decay_chandelier_mult(base_mult: float, bars_in_position: int,
+                                    tau: int = 48,
+                                    width_boost: float = 0.6) -> float:
+    """Hawkes-self-exciting-decay-aware adaptive Chandelier multiplier.
+
+    Reference: Aït-Sahalia, Cacho-Diaz & Laeven (2014),
+    *Modeling financial contagion using mutually exciting jump processes*,
+    JFE 117(3) §2-3. The Hawkes intensity λ(t) = λ₀ + α Σ exp(-β(t-tᵢ))
+    decays with timescale τ = 1/β. During the *active* cluster window
+    (bars_in_position ≪ τ) the price path is locally noisy from continued
+    jump arrivals on the same side; a *wide* chandelier prevents premature
+    stop-outs on cluster-internal pullbacks. As bars_in_position → τ the
+    cluster fades and the overreaction reversal (Lo-MacKinlay 1990;
+    De Bondt-Thaler 1985) takes over — a *tight* chandelier locks in
+    cluster profit before the mean-reversion drag.
+
+    Functional form (chosen to match the Hawkes intensity decay):
+
+        adaptive_mult = base_mult × (1 + width_boost × exp(-t / τ))
+
+    so at entry      (t = 0)   adaptive = base × (1 + width_boost)
+    at one cluster  (t = τ)   adaptive = base × (1 + width_boost/e) ≈ +37%
+    at t ≫ τ                  adaptive → base.
+
+    width_boost = 0 reverts to the static legacy behaviour.
+    """
+    if width_boost <= 0 or tau <= 0:
+        return base_mult
+    return base_mult * (1.0 + width_boost * np.exp(-bars_in_position / tau))
+
+
 def macro_trend_majority(rets: np.ndarray, side: str,
                            lookbacks: tuple[int, ...] = (168, 336, 720),
                            min_agree: int = 2) -> bool:
@@ -223,6 +254,38 @@ class StrategyParams:
     yz_n: int = 20
     band_mult: float = 1.5
     time_stop_bars: int = 48
+    # ---- v3 Hawkes-decay-aware adaptive chandelier ---------------- #
+    # Aït-Sahalia, Cacho-Diaz & Laeven (2014), JFE 117(3): Hawkes self-
+    # exciting intensity λ(t) = λ₀ + α Σ exp(-β(t-tᵢ)) decays with τ=1/β.
+    # During the early cluster window (t ≪ τ) the path is locally
+    # noisy from continued jump arrivals — a wide chandelier prevents
+    # premature stop-outs on cluster-internal pullbacks. As t → τ the
+    # cluster fades and the underlying overreaction effect (Lo-MacKinlay
+    # 1990; De Bondt-Thaler 1985) starts to dominate — a tight
+    # chandelier locks in profit before the mean-reversion drag.
+    #   chand_mult_t = chandelier_mult * (1 + width_boost * exp(-t/τ))
+    # τ = chandelier_decay_tau (bars). Default τ = 48 = pick_ttl, so
+    # at entry the chandelier is (1 + width_boost) × wider; at t=τ it
+    # is (1 + width_boost/e) × ≈ 1.37×; at t≫τ it asymptotes to
+    # chandelier_mult.
+    # Set width_boost = 0 to disable the adaption (legacy v2 behaviour).
+    chandelier_decay_tau: int = 48
+    chandelier_width_boost: float = 0.6
+    # ---- v3 Faber-2007 pyramiding within Hawkes cluster ----------- #
+    # Faber (2007), *A Quantitative Approach to Tactical Asset
+    # Allocation* §IV, formalises the trend-follower's classical rule:
+    # "scale into winners, never into losers." When a fresh same-side
+    # screener pick arrives while the existing position is in profit
+    # AND we have capacity remaining within sizing_cap, add a partial
+    # leg. Each leg has its OWN entry, anchor, peak/trough and adaptive
+    # chandelier — so exits are LIFO-ish in time. Total exposure across
+    # legs is capped by sizing_cap (live invariant), and each leg's
+    # size is risk_per_trade / max_pyramid_legs so the joint risk
+    # respects partial-Kelly (MacLean-Thorp-Ziemba 2011 §3): aggregate
+    # risk per cluster ≈ risk_per_trade.
+    # Set max_pyramid_legs=1 to revert to single-leg behaviour.
+    max_pyramid_legs: int = 3
+    pyramid_in_profit_required: bool = True
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05
@@ -456,14 +519,19 @@ class TrendFollowingStrategy:
                     else:
                         trough = close
             else:
-                # update trailing reference
+                # update trailing reference (v3 Hawkes-decay-aware)
+                bars_in_pos = i - entry_idx
+                adapt_mult = hawkes_decay_chandelier_mult(
+                    self.p.chandelier_mult, bars_in_pos,
+                    tau=self.p.chandelier_decay_tau,
+                    width_boost=self.p.chandelier_width_boost)
                 if position_side == "long":
                     peak = max(peak, close)
-                    chandelier = peak - self.p.chandelier_mult * atr_i
+                    chandelier = peak - adapt_mult * atr_i
                     hit = close < chandelier
                 else:
                     trough = min(trough, close)
-                    chandelier = trough + self.p.chandelier_mult * atr_i
+                    chandelier = trough + adapt_mult * atr_i
                     hit = close > chandelier
 
                 time_stop = (i - entry_idx) >= self.p.time_stop_bars

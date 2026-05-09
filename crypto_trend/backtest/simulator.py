@@ -132,16 +132,23 @@ class StrategySimulator:
             top_n=screener_top_n or 10,
         )
 
-        positions: dict[str, dict] = {}
+        # v3: multi-leg pyramiding support — positions[sym] is now a
+        # list of leg dicts. Each leg carries its own
+        # (side, entry_idx, entry_px, size, peak, trough). Total
+        # exposure is sum(leg["size"]); chandelier checked per leg.
+        positions: dict[str, list[dict]] = {}
         trades: list[Trade] = []
         bar_pnl = np.zeros(n_bars, dtype=float)
         bars_with_position = 0
-        # symbol -> (side, expires_at_bar_idx, pre_pick_anchor_close).
-        # The anchor is the close of the bar immediately before the
-        # screener fired — used by v2.2 cascade-test continuation entry
-        # so the jump bar itself fires (close[jump] > close[jump-1])
-        # without re-detecting the jump via Donchian.
         active_picks: dict[str, tuple[str, int, float]] = {}
+        # v3 tracker — bar at which the current pick episode for `sym`
+        # last received a *fresh* (not just TTL-extended) screener fire.
+        # Used as the "new cluster pulse" trigger for pyramiding.
+        last_fresh_pick_bar: dict[str, int] = {}
+        # Track which fresh-pick bars have already been consumed by an
+        # entry / pyramid action — so we don't re-fire on the same
+        # pulse across consecutive bars.
+        consumed_pulse_bar: dict[str, int] = {}
         rescreen_history: list[tuple[int, int, int]] = []
 
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
@@ -166,14 +173,15 @@ class StrategySimulator:
                     quote_volume_provider=lambda s: 1e12,
                     funding_rate_provider=self.funding_rate_provider,
                 )
-                # Refresh fresh picks (extend expiry); old picks linger
-                # until their TTL expires so the strategy gets multiple
-                # bars for the cluster to develop. Anchor is locked at
-                # the *first* time we see this pick so subsequent
-                # rescreens don't keep moving the entry reference.
+                # Refresh fresh picks (extend expiry). v3: every
+                # screener-fire is a "fresh pulse" for pyramiding —
+                # we record last_fresh_pick_bar but keep the original
+                # anchor (so the *first-entry* cascade-test reference
+                # remains stable while pyramiding compares against a
+                # different per-leg anchor below).
                 for r in results:
+                    last_fresh_pick_bar[r.symbol] = t
                     if r.symbol in active_picks:
-                        # keep the original anchor; just extend TTL
                         side_old, _expiry_old, anchor_old = active_picks[r.symbol]
                         if side_old == r.side:
                             active_picks[r.symbol] = (
@@ -196,58 +204,75 @@ class StrategySimulator:
                 close = pc.closes[t]
                 if close <= 0 or np.isnan(close):
                     continue
-                pos = positions.get(sym)
+                legs = positions.get(sym, [])
                 a_i = pc.atr[t]
                 yz_i = pc.yz[t]
                 band = p.band_mult * yz_i * close
 
-                if pos is not None:
-                    side_sign = 1.0 if pos["side"] == "long" else -1.0
+                if legs:
+                    from ..strategy.trend_following import (
+                        hawkes_decay_chandelier_mult)
                     prev_close = pc.closes[t - 1]
-                    if prev_close > 0 and not np.isnan(prev_close):
-                        bar_pnl[t] += side_sign * (np.log(close / prev_close)
-                                                     * pos["size"])
-
-                    # ---- exit decision -------------------------------- #
-                    if pos["side"] == "long":
-                        pos["peak"] = max(pos["peak"], close)
-                        chand = pos["peak"] - p.chandelier_mult * a_i
-                        chand_hit = close < chand
+                    surviving: list[dict] = []
+                    for leg in legs:
+                        side_sign = 1.0 if leg["side"] == "long" else -1.0
+                        if prev_close > 0 and not np.isnan(prev_close):
+                            bar_pnl[t] += side_sign * (np.log(close / prev_close)
+                                                         * leg["size"])
+                        # ---- per-leg exit decision (adaptive chandelier)
+                        bars_in_pos = t - leg["entry_idx"]
+                        adapt_mult = hawkes_decay_chandelier_mult(
+                            p.chandelier_mult, bars_in_pos,
+                            tau=p.chandelier_decay_tau,
+                            width_boost=p.chandelier_width_boost)
+                        if leg["side"] == "long":
+                            leg["peak"] = max(leg["peak"], close)
+                            chand = leg["peak"] - adapt_mult * a_i
+                            chand_hit = close < chand
+                        else:
+                            leg["trough"] = min(leg["trough"], close)
+                            chand = leg["trough"] + adapt_mult * a_i
+                            chand_hit = close > chand
+                        time_stop = bars_in_pos >= p.time_stop_bars
+                        win = pc.log_rets[max(0, t - 64): t] * side_sign
+                        cvar_breach = (win.size > 0
+                                        and np.quantile(win, p.cvar_alpha) < p.cvar_floor)
+                        if chand_hit or time_stop or cvar_breach:
+                            reason = ("chandelier" if chand_hit
+                                       else "time_stop" if time_stop
+                                       else "cvar_breach")
+                            exit_px = close * (1.0 - self.slippage_bps * 1e-4 * side_sign)
+                            bar_pnl[t] -= leg["size"] * cost_per_fill
+                            pnl = (np.log(exit_px / leg["entry_px"]) * side_sign
+                                    * leg["size"] - 2.0 * leg["size"] * cost_per_fill)
+                            trades.append(Trade(
+                                symbol=sym, side=leg["side"],
+                                entry_ts=idx[leg["entry_idx"]], exit_ts=ts,
+                                entry_price=float(leg["entry_px"]),
+                                exit_price=float(exit_px),
+                                size_fraction=float(leg["size"]),
+                                pnl=float(pnl),
+                                bars_held=bars_in_pos,
+                                exit_reason=reason,
+                            ))
+                        else:
+                            surviving.append(leg)
+                    if surviving:
+                        positions[sym] = surviving
                     else:
-                        pos["trough"] = min(pos["trough"], close)
-                        chand = pos["trough"] + p.chandelier_mult * a_i
-                        chand_hit = close > chand
+                        positions.pop(sym, None)
 
-                    time_stop = (t - pos["entry_idx"]) >= p.time_stop_bars
-
-                    win = pc.log_rets[max(0, t - 64): t] * side_sign
-                    cvar_breach = (win.size > 0
-                                    and np.quantile(win, p.cvar_alpha) < p.cvar_floor)
-
-                    if chand_hit or time_stop or cvar_breach:
-                        reason = ("chandelier" if chand_hit
-                                   else "time_stop" if time_stop
-                                   else "cvar_breach")
-                        exit_px = close * (1.0 - self.slippage_bps * 1e-4 * side_sign)
-                        bar_pnl[t] -= pos["size"] * cost_per_fill
-                        pnl = (np.log(exit_px / pos["entry_px"]) * side_sign
-                                * pos["size"] - 2.0 * pos["size"] * cost_per_fill)
-                        trades.append(Trade(
-                            symbol=sym, side=pos["side"],
-                            entry_ts=idx[pos["entry_idx"]], exit_ts=ts,
-                            entry_price=float(pos["entry_px"]),
-                            exit_price=float(exit_px),
-                            size_fraction=float(pos["size"]),
-                            pnl=float(pnl),
-                            bars_held=t - pos["entry_idx"],
-                            exit_reason=reason,
-                        ))
-                        positions.pop(sym)
-                        continue
-
-                # ---- entry decision -------------------------------------- #
-                if pos is not None:
-                    continue
+                # ---- entry / pyramid decision ----------------------- #
+                # Pyramid permitted iff (Faber 2007 §IV winner-only rule):
+                #   - existing legs are all on the picked side
+                #   - aggregate unrealised PnL > 0 (only scale into winners)
+                #   - leg count < max_pyramid_legs
+                #   - total exposure has remaining capacity (sizing_cap)
+                #   - the current bar carries a FRESH screener pulse not
+                #     yet consumed (so we don't pyramid every bar)
+                # If a position exists but pyramid conditions fail → skip.
+                # If no position exists → normal cascade-test entry.
+                legs_now = positions.get(sym, [])
                 if sym not in active_picks:
                     continue
                 want, _expiry, anchor = active_picks[sym]
@@ -302,6 +327,34 @@ class StrategySimulator:
                 if not (fire_long or fire_short):
                     continue
 
+                # ---- pyramid gate (Faber 2007 §IV winner-only rule) -- #
+                if legs_now:
+                    # Existing legs must agree with the picked side.
+                    if any(L["side"] != ("long" if fire_long else "short")
+                            for L in legs_now):
+                        continue
+                    # Aggregate unrealised PnL across legs must be > 0.
+                    if p.pyramid_in_profit_required:
+                        agg_pnl = sum(
+                            (1.0 if L["side"] == "long" else -1.0)
+                            * np.log(close / L["entry_px"]) * L["size"]
+                            for L in legs_now)
+                        if agg_pnl <= 0:
+                            continue
+                    # Leg count cap.
+                    if len(legs_now) >= p.max_pyramid_legs:
+                        continue
+                    # Capacity within sizing_cap.
+                    used = sum(L["size"] for L in legs_now)
+                    if used >= p.sizing_cap:
+                        continue
+                    # Fresh screener pulse this bar, not yet consumed.
+                    pulse = last_fresh_pick_bar.get(sym)
+                    if pulse != t:
+                        continue
+                    if consumed_pulse_bar.get(sym) == t:
+                        continue
+
                 # Strategy-aware sizing — fixed-fractional risk against the
                 # Chandelier stop, multiplied by LM/agree confidence,
                 # capped by CVaR floor and safe-leverage rule.
@@ -314,13 +367,18 @@ class StrategySimulator:
                 lm_signed = (1 if fire_long else -1) * abs(lm)
                 agree = multi_horizon_alignment(
                     pre_rets, 1 if fire_long else -1, horizons=(1, 4, 24))
+                # Pyramid risk fractioning: each leg gets risk_per_trade
+                # split across the maximum permitted legs so the
+                # aggregate cluster risk respects partial-Kelly
+                # (MacLean-Thorp-Ziemba 2011 §3).
+                per_leg_risk = (p.risk_per_trade / max(1, p.max_pyramid_legs))
                 decision = optimal_position(
                     sample,
                     price=close, atr=a_i,
                     lm_stat=float(lm_signed), agree=int(agree), max_agree=3,
                     lm_threshold=p.lm_threshold,
                     chandelier_mult=p.chandelier_mult,
-                    risk_per_trade=p.risk_per_trade,
+                    risk_per_trade=per_leg_risk,
                     cvar_floor=p.cvar_floor,
                     cvar_alpha=p.cvar_alpha,
                     sizing_cap=p.sizing_cap,
@@ -330,37 +388,44 @@ class StrategySimulator:
                 size = decision.fraction
                 if size <= 0:
                     continue
+                # Cap so total exposure respects sizing_cap.
+                used = sum(L["size"] for L in legs_now)
+                size = min(size, max(0.0, p.sizing_cap - used))
+                if size <= 0:
+                    continue
 
                 side = "long" if fire_long else "short"
                 side_sign = 1.0 if fire_long else -1.0
                 entry_px = close * (1.0 + self.slippage_bps * 1e-4 * side_sign)
                 bar_pnl[t] -= size * cost_per_fill
-                positions[sym] = dict(
+                positions.setdefault(sym, []).append(dict(
                     side=side, entry_idx=t, entry_px=float(entry_px),
                     size=float(size),
                     peak=float(close),
                     trough=float(close),
-                )
+                ))
+                consumed_pulse_bar[sym] = t
 
             if positions:
                 bars_with_position += 1
 
-        # Mark out anything still open
-        for sym, pos in list(positions.items()):
+        # Mark out anything still open (per-leg)
+        for sym, legs in list(positions.items()):
             close = pre[sym].closes[-1]
-            side_sign = 1.0 if pos["side"] == "long" else -1.0
-            pnl = (np.log(close / pos["entry_px"]) * side_sign * pos["size"]
-                    - 2.0 * pos["size"] * cost_per_fill)
-            trades.append(Trade(
-                symbol=sym, side=pos["side"],
-                entry_ts=idx[pos["entry_idx"]], exit_ts=idx[-1],
-                entry_price=float(pos["entry_px"]),
-                exit_price=float(close),
-                size_fraction=float(pos["size"]),
-                pnl=float(pnl),
-                bars_held=n_bars - 1 - pos["entry_idx"],
-                exit_reason="mark_out",
-            ))
+            for leg in legs:
+                side_sign = 1.0 if leg["side"] == "long" else -1.0
+                pnl = (np.log(close / leg["entry_px"]) * side_sign * leg["size"]
+                        - 2.0 * leg["size"] * cost_per_fill)
+                trades.append(Trade(
+                    symbol=sym, side=leg["side"],
+                    entry_ts=idx[leg["entry_idx"]], exit_ts=idx[-1],
+                    entry_price=float(leg["entry_px"]),
+                    exit_price=float(close),
+                    size_fraction=float(leg["size"]),
+                    pnl=float(pnl),
+                    bars_held=n_bars - 1 - leg["entry_idx"],
+                    exit_reason="mark_out",
+                ))
 
         exposure = bars_with_position / max(n_bars - warmup_bars, 1)
 

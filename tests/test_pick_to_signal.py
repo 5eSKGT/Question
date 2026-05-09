@@ -47,16 +47,17 @@ def test_screener_long_pick_fires_on_jump_bar():
     consolidation would miss the Hawkes cluster.
 
     Tape: 800 bars with mild positive drift so v2.1's multi-horizon TSM
-    majority (7d/14d/30d) cleanly admits longs — the contract here is
-    *entry on jump*, not the macro-filter behaviour itself, which has
-    its own dedicated tests above.
+    majority (7d/14d/30d) cleanly admits longs. v3's adaptive chandelier
+    (width_boost > 0) is disabled in this fixture so an earlier same-
+    direction entry doesn't carry through to the jump bar — the contract
+    being pinned here is *cascade-test entry on jump*, not exit lifecycle.
     """
     rng = np.random.default_rng(0)
     base = 100 * np.exp(np.cumsum(rng.normal(0.0005, 0.005, 800)))
     base[-1] = base[-2] * 1.05                          # +5% jump on last bar
 
     df = _ohlcv(base)
-    strat = TrendFollowingStrategy(StrategyParams())
+    strat = TrendFollowingStrategy(StrategyParams(chandelier_width_boost=0.0))
     sigs = strat.generate_signals(df, screener_side="long",
                                     source=SignalSource.HIST)
 
@@ -73,13 +74,17 @@ def test_screener_long_pick_fires_on_jump_bar():
 
 
 def test_screener_short_pick_fires_on_down_jump_bar():
-    """Symmetric LOSER pick: -6% down-jump → short entry on jump bar."""
+    """Symmetric LOSER pick: -6% down-jump → short entry on jump bar.
+    Static chandelier (width_boost=0) and short-history tape so v2.1
+    multi-horizon TSM falls back to the most permissive single-horizon
+    test, isolating the cascade-test entry contract.
+    """
     rng = np.random.default_rng(1)
     base = 100 * np.exp(np.cumsum(rng.normal(0, 0.005, 300)))
     base[-1] = base[-2] * 0.94                          # -6% down-jump
 
     df = _ohlcv(base)
-    strat = TrendFollowingStrategy(StrategyParams())
+    strat = TrendFollowingStrategy(StrategyParams(chandelier_width_boost=0.0))
     sigs = strat.generate_signals(df, screener_side="short",
                                     source=SignalSource.HIST)
     last_ts = df.index[-1]
