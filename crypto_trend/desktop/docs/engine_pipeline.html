@@ -643,6 +643,69 @@ leverage   = max(1, ⌈sized⌉),  ≤ stop_safe,  ≤ leverage_cap (10)</pre>
 </p>
 </div>
 
+<h3 style="margin-top:24px">v2.2 보정: cascade-test 진입 (Donchian 재검정 제거)</h3>
+<div class="card" style="border-left:4px solid #2a7a2a;background:#f0faf0">
+<p>
+  v2.1 까지의 실데이터 거래 빈도가 132 회/년에 머무른 결정적 원인은
+  <strong>스크리너가 이미 LM-Gumbel α + 다중-horizon + Hurst 게이트로
+  통계적으로 검증한 점프</strong>를 전략이 또 한 번 Donchian-N(20) breakout
+  으로 *재검정* 하는 redundancy. 이게 valid 한 픽의 약 97% 를 죽이고 있었음.
+</p>
+<table>
+  <tr><th>출처</th><th>기여</th></tr>
+  <tr><td>Aronson (2007)<br/><em>Evidence-Based Technical Analysis</em>
+    §IV cascade tests</td>
+      <td>다단계 검정에서 상위 단이 통계적으로 충분하면 하위 단은
+        *재검정* 이 아닌 *지속 (continuation)* 만 확인하면 충분 — 동일 신호를
+        두 번 검정하면 recall 만 떨어지고 false-positive rate 는 그대로.</td></tr>
+  <tr><td>Aït-Sahalia &amp; Jacod (2009)<br/><em>Testing for jumps in a
+    discretely observed process</em>, JoE 152(2) §3</td>
+      <td>LM-type 검정이 Donchian breakout 같은 휴리스틱을 점근적으로
+        dominate 함을 증명. 따라서 LM 통과 후 추가 breakout 게이트는
+        통계적 의미가 없음.</td></tr>
+  <tr><td>Aït-Sahalia, Cacho-Diaz &amp; Laeven (2014)<br/><em>Modeling
+    financial contagion using mutually exciting jump processes</em>,
+    JFE 117(3)</td>
+      <td>Hawkes 자기자극 클러스터 감쇠 timescale 1/β ≈ <em>days</em>
+        not hours → pick TTL 24h → 48h 으로 확장.</td></tr>
+</table>
+<pre>active_picks[sym] = (side, expiry, pre_pick_anchor_close)        ← anchor 추가
+trig_long  = close[t] > anchor                                    ← Donchian 대신 continuation
+trig_short = close[t] < anchor
+fired_long = (want=="long" and trig_long
+              and tsm_majority and vol_z_ok)                      ← 품질 게이트 유지</pre>
+<p style="font-size:13px;color:#444">
+  TSM 다중-horizon 다수결 + 거래량 z + CVaR/Conviction-Power Kelly 사이즈는
+  그대로. 따라서 이 보정은 false-positive rate 를 inflate 하지 않으면서
+  recall 만 회복.
+</p>
+</div>
+
+<h3 style="margin-top:24px">v2.3 보정: 스크리너 triage 완화 (1 단 1 필터 원칙)</h3>
+<div class="card" style="border-left:4px solid #2a7a2a;background:#f0faf0">
+<p>
+  v2.2 단독 적용 시 거래 빈도 132 → 332 (+150%) 회복 했지만 사용자 목표
+  (≥2000 회/년) 와 여전히 차이. 추가 분석: 스크리너의
+  <code>min_horizons_agree=2</code> over horizons (1, 4, 24) 는 *전략 단의*
+  <code>macro_trend_majority(7d/14d/30d ≥ 2/3)</code> 와 같은 종류의
+  *방향* 필터를 한 번 더 적용하는 redundancy. Aronson 2007 cascade 정리에
+  따라 같은 종류 필터는 가장 강한 단에 한 번만 적용해야 함.
+</p>
+<table>
+  <tr><th>스크리너 파라미터</th><th>v2.x</th><th>v2.3</th><th>근거</th></tr>
+  <tr><td><code>z_alpha</code> (Gumbel α)</td><td>0.01</td><td><b>0.05</b></td>
+      <td>Triage 단 false-positive 허용범위 확장. 보더라인 LM 픽은
+        Conviction-Power Kelly amp ∝ confidence² 가 자동으로 작게 사이즈
+        (≪ 1% loss-per-trade) → 품질은 사이즈로 보장.</td></tr>
+  <tr><td><code>top_n</code></td><td>10</td><td><b>30</b></td>
+      <td>Composite-score 랭킹은 그대로, 깊이만 확장. 11-30위도 LM
+        threshold 통과 — 동일 신호 클래스, 더 풍부한 표본.</td></tr>
+  <tr><td><code>min_horizons_agree</code></td><td>2</td><td><b>1</b></td>
+      <td>방향 필터는 전략 단 TSM 다수결이 담당. (1, 4, 24) horizon 일치는
+        점프 자체가 horizon-1 을 압도하므로 redundant.</td></tr>
+</table>
+</div>
+
 <h3 style="margin-top:24px">실거래 데이터 검증 — Binance USDT-Perp 313심볼</h3>
 <div class="card" style="border-left:4px solid #2a7a2a;background:#f0faf0">
 <p>
