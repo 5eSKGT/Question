@@ -149,6 +149,11 @@ class StrategySimulator:
         # entry / pyramid action — so we don't re-fire on the same
         # pulse across consecutive bars.
         consumed_pulse_bar: dict[str, int] = {}
+        # v3 A2: leader-jump history per side, used by the cross-asset
+        # Hawkes (AS-CD-L 2014) confidence boost on follower picks.
+        # Maps side ("long" / "short") → list of (bar_idx, leader_sym)
+        # within the rolling decay window.
+        leader_jump_history: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
         rescreen_history: list[tuple[int, int, int]] = []
 
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
@@ -176,11 +181,13 @@ class StrategySimulator:
                 # Refresh fresh picks (extend expiry). v3: every
                 # screener-fire is a "fresh pulse" for pyramiding —
                 # we record last_fresh_pick_bar but keep the original
-                # anchor (so the *first-entry* cascade-test reference
-                # remains stable while pyramiding compares against a
-                # different per-leg anchor below).
+                # anchor.  Also: A2 — record leader (BTC/ETH/...) jumps
+                # so follower picks within the decay window get a
+                # confidence boost at sizing time.
                 for r in results:
                     last_fresh_pick_bar[r.symbol] = t
+                    if r.symbol in p.leader_symbols:
+                        leader_jump_history[r.side].append((t, r.symbol))
                     if r.symbol in active_picks:
                         side_old, _expiry_old, anchor_old = active_picks[r.symbol]
                         if side_old == r.side:
@@ -193,6 +200,13 @@ class StrategySimulator:
                 # Drop expired picks
                 active_picks = {s: v for s, v in active_picks.items()
                                   if v[1] > t}
+                # Trim leader-jump history outside the decay window so
+                # the lookup below is O(window) not O(history).
+                cutoff = t - p.leader_anchor_decay_bars
+                for side in ("long", "short"):
+                    leader_jump_history[side] = [
+                        (b, s) for (b, s) in leader_jump_history[side]
+                        if b >= cutoff]
                 rescreen_history.append((
                     (t - warmup_bars) // self.rescreen_every,
                     len(symbols), len(results),
@@ -367,6 +381,21 @@ class StrategySimulator:
                 lm_signed = (1 if fire_long else -1) * abs(lm)
                 agree = multi_horizon_alignment(
                     pre_rets, 1 if fire_long else -1, horizons=(1, 4, 24))
+                # ---- A2: cross-asset Hawkes leader-anchor boost --- #
+                # If a same-side leader (BTC/ETH/...) jump fired in the
+                # last leader_anchor_decay_bars (AS-CD-L 2014 cross-
+                # excitation window τ = 1/β), boost |L| so the
+                # downstream Conviction-Power Kelly amp scales the
+                # position up. The follower symbol itself can be a
+                # leader in disguise (e.g. ETH following BTC); only
+                # apply the boost if the picked symbol is NOT the
+                # same as the leader that fired.
+                want_side = "long" if fire_long else "short"
+                lead_present = any(s != sym for (_b, s) in
+                                    leader_jump_history[want_side])
+                if lead_present:
+                    boost = p.leader_anchor_boost
+                    lm_signed = lm_signed * boost
                 # Pyramid risk fractioning: each leg gets risk_per_trade
                 # split across the maximum permitted legs so the
                 # aggregate cluster risk respects partial-Kelly

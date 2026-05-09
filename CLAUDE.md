@@ -54,8 +54,21 @@ chandelier_mult=3.0 고정값. 변동성/Hawkes-decay 조건부 적응형 chande
 ### P3 — Breadth utilisation
 필터 통과 이벤트 4,675/yr 중 실제 trade = 332/yr → **7% 활용률**. Position-blocking + CVaR floor 가 4,343 이벤트를 reject. Faber (2007) pyramiding within cluster 같은 학술 정합 방안만 고려. 단, 동일 방향 누적 노출은 risk_per_trade 를 같은 비율로 분할해야 (Kelly 일치).
 
-### P4 — DO NOT ADD NEW SIGNAL CLASSES
-IC 가 음수이므로 새 시그널 클래스 (multi-timeframe LM, order-flow 등) 추가 = 데이터의 negative IC 를 우회하기 위한 사후 적합 = overfitting 의 정의. **금지**.
+### P4 — 시그널 클래스 추가 시 엄격한 정합성 기준
+IC 가 음수라는 측정 결과는 *현재 사용 중인 단일-스케일 LM 시그널의 한계*만 말한다. 다음 두 종류는 구분된다:
+
+**A. 같은 시그널 클래스의 학술적 확장 (허용)**
+- Lee-Mykland 2008 의 scale invariance 에 따른 *multi-timeframe* LM (1h/4h/12h)
+- Aït-Sahalia-Cacho-Diaz-Laeven 2014 §3 의 *univariate → mutually exciting multivariate* Hawkes 확장
+- Easley-LdP-O'Hara 2012 informativeness 의 *funding asymmetry* 차원 (carry premium, AMP 2013)
+- 이들은 *원 논문이 같은 프레임에서 다음 스텝으로 정의한 자연 확장*. BR 또는 per-event 정보량을 늘리면서도 데이터 IC 천장을 본질적으로 *상승* 시킴 (스케일/심볼/funding 차원에서 *부분 독립* 신호 추가).
+
+**B. 임의의 새 시그널 클래스 (금지)**
+- ad-hoc 머신러닝 모델, 임의의 microstructure 변형, 본 framework 와 무관한 indicator
+- "거래 수가 늘어서" 또는 "Sharpe 가 좋아져서" 라는 결과 매칭 정당화로만 받아들이는 것
+- *IC 음수 우회* 가 목적인 모든 시그널
+
+**판정 기준**: 새 시그널을 추가하려면 (a) 인용 가능한 학술 reference 와 함께 (b) 본 framework 의 직접 확장임을 코드 옆 reference 박고 (c) `tools/upper_bound_analysis.py` 가 측정 가능한 IC/BR 향상을 OOS 에서 보일 것.
 
 ## 절대 금지 행동
 - OOS 게이트 자체 완화

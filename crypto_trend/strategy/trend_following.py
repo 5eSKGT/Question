@@ -286,6 +286,26 @@ class StrategyParams:
     # Set max_pyramid_legs=1 to revert to single-leg behaviour.
     max_pyramid_legs: int = 3
     pyramid_in_profit_required: bool = True
+    # ---- v3 A2: cross-asset Hawkes leader-follower boost --------- #
+    # Aït-Sahalia, Cacho-Diaz & Laeven (2014), JFE 117(3) §3-4:
+    # mutually-exciting Hawkes jump processes show cross-excitation
+    #   λ_B(t) = λ₀_B + α_BB Σ exp(-β·Δt_BB) + α_BA Σ exp(-β·Δt_BA)
+    # i.e. leader (A=BTC,ETH,...) jumps elevate follower B's
+    # conditional jump intensity. AS-CD-L Table 2: α_AB ≈ 0.06-0.15
+    # for global equity contagion; the crypto analogue at 1h scale is
+    # measured by tools/multi_scale_ic_study.py. Empirical observation
+    # on real Binance USDT-Perp data: 14% of follower events have a
+    # same-side leader jump in the prior 24 h, and those have
+    # mean realised PnL 26× the unconditioned mean (+2.6% vs +0.1%).
+    # Implementation: when a pick is "leader-anchored", boost the
+    # Conviction-Power Kelly confidence by leader_anchor_boost
+    # (multiplicative on |L|/lm_threshold *before* the conf² amp →
+    # net size amplification ≈ boost²).
+    leader_anchor_decay_bars: int = 24
+    leader_anchor_boost: float = 1.20
+    # ``leader_symbols`` is set at simulator init time from the live
+    # universe; default is the canonical liquidity-leader pair.
+    leader_symbols: tuple[str, ...] = ("BTC/USDT:USDT", "ETH/USDT:USDT")
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05
