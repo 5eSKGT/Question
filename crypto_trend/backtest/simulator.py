@@ -130,6 +130,7 @@ class StrategySimulator:
         screener = self.screener or WinnerLoserScreener(
             min_quote_volume=0.0,
             top_n=screener_top_n or 10,
+            additional_scales=p.multi_scale_lm_factors,
         )
 
         # v3: multi-leg pyramiding support — positions[sym] is now a
@@ -140,7 +141,12 @@ class StrategySimulator:
         trades: list[Trade] = []
         bar_pnl = np.zeros(n_bars, dtype=float)
         bars_with_position = 0
-        active_picks: dict[str, tuple[str, int, float]] = {}
+        # v3 A1: active_picks now carries (side, expiry, anchor, scale).
+        # ``scale`` is the screener-detection timeframe multiplier (1 =
+        # native 1h; 4 = 4h aggregated). The strategy uses scale to
+        # widen the chandelier on entries from longer-scale picks
+        # (Bandy 2014 §5: ATR-based stops scale with √timeframe).
+        active_picks: dict[str, tuple[str, int, float, int]] = {}
         # v3 tracker — bar at which the current pick episode for `sym`
         # last received a *fresh* (not just TTL-extended) screener fire.
         # Used as the "new cluster pulse" trigger for pyramiding.
@@ -188,15 +194,18 @@ class StrategySimulator:
                     last_fresh_pick_bar[r.symbol] = t
                     if r.symbol in p.leader_symbols:
                         leader_jump_history[r.side].append((t, r.symbol))
+                    pick_scale = getattr(r, "scale", 1)
                     if r.symbol in active_picks:
-                        side_old, _expiry_old, anchor_old = active_picks[r.symbol]
+                        side_old, _expiry_old, anchor_old, scale_old = active_picks[r.symbol]
                         if side_old == r.side:
+                            # Keep the larger scale (slower cluster wins).
+                            new_scale = max(scale_old, pick_scale)
                             active_picks[r.symbol] = (
-                                r.side, t + self.pick_ttl, anchor_old)
+                                r.side, t + self.pick_ttl, anchor_old, new_scale)
                             continue
                     pre_pick_close = float(pre[r.symbol].closes[max(0, t - 1)])
                     active_picks[r.symbol] = (
-                        r.side, t + self.pick_ttl, pre_pick_close)
+                        r.side, t + self.pick_ttl, pre_pick_close, pick_scale)
                 # Drop expired picks
                 active_picks = {s: v for s, v in active_picks.items()
                                   if v[1] > t}
@@ -233,10 +242,17 @@ class StrategySimulator:
                         if prev_close > 0 and not np.isnan(prev_close):
                             bar_pnl[t] += side_sign * (np.log(close / prev_close)
                                                          * leg["size"])
-                        # ---- per-leg exit decision (adaptive chandelier)
+                        # ---- per-leg exit decision (adaptive +
+                        # scale-aware chandelier — A1 / Bandy 2014 §5).
+                        # 4h-scale picks get a chandelier widened by
+                        # √4 = 2× because the natural jump magnitude
+                        # at 4h is √scale × 1h-jump magnitude (volatility
+                        # scales with √time under no-arbitrage).
                         bars_in_pos = t - leg["entry_idx"]
+                        leg_scale = leg.get("scale", 1)
+                        scale_mult = float(np.sqrt(max(1, leg_scale)))
                         adapt_mult = hawkes_decay_chandelier_mult(
-                            p.chandelier_mult, bars_in_pos,
+                            p.chandelier_mult * scale_mult, bars_in_pos,
                             tau=p.chandelier_decay_tau,
                             width_boost=p.chandelier_width_boost)
                         if leg["side"] == "long":
@@ -289,7 +305,7 @@ class StrategySimulator:
                 legs_now = positions.get(sym, [])
                 if sym not in active_picks:
                     continue
-                want, _expiry, anchor = active_picks[sym]
+                want, _expiry, anchor, pick_scale = active_picks[sym]
                 # v2.2 cascade-test entry: continuation past the
                 # pre-pick anchor is the entry trigger. The screener
                 # already exhausted the false-positive budget at the
@@ -432,6 +448,7 @@ class StrategySimulator:
                     size=float(size),
                     peak=float(close),
                     trough=float(close),
+                    scale=int(pick_scale),
                 ))
                 consumed_pulse_bar[sym] = t
 

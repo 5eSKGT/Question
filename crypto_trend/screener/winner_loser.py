@@ -345,6 +345,12 @@ class ScreenResult:
     composite: float
     last_price: float
     horizons_agree: int = 0
+    # v3 A1: scale at which the LM jump was detected (1 = native 1h
+    # bars; 4 = 4h aggregated bars; 12 = 12h). Lee-Mykland 2008 §2.4
+    # scale invariance lets us run the same statistic on aggregated
+    # bars; the sizing/exit machinery uses the scale to scale the
+    # chandelier width (Bandy 2014 §5).
+    scale: int = 1
 
     def as_row(self) -> dict:
         return {
@@ -357,6 +363,7 @@ class ScreenResult:
             "composite": round(self.composite, 3),
             "last_price": self.last_price,
             "horizons_agree": self.horizons_agree,
+            "scale": self.scale,
         }
 
 
@@ -390,6 +397,12 @@ class WinnerLoserScreener:
         vol_regime_long_window: int = 240,
         funding_long_block: float = 0.0008,
         funding_short_block: float = -0.0008,
+        # v3 A1: scale invariance (Lee-Mykland 2008 §2.4). When non-
+        # empty, the screener also evaluates LM on aggregated higher-
+        # timeframe bars (e.g. 4h on a 1h cache). Each scale's picks
+        # are merged into the final ScreenResult list with a `scale`
+        # tag. Empty tuple = native single-scale (legacy v2.x).
+        additional_scales: tuple[int, ...] = (),
     ) -> None:
         self.lookback = lookback
         # If user did not specify a flat threshold, use the academically-
@@ -409,6 +422,7 @@ class WinnerLoserScreener:
         self.vol_regime_long_window = vol_regime_long_window
         self.funding_long_block = funding_long_block
         self.funding_short_block = funding_short_block
+        self.additional_scales = tuple(additional_scales)
 
     # ------------------------------------------------------------------ #
     def _hurst(self, rets: np.ndarray) -> float:
@@ -499,21 +513,59 @@ class WinnerLoserScreener:
             except Exception as e:                        # noqa: BLE001
                 log.debug(f"screener: {sym} skipped: {e}")
                 continue
+            # ---- native scale ------------------------------------------- #
             scored = self.score(candles, qv, funding_rate=fr)
-            if scored is None:
-                continue
-            composite, L, h, side, agree = scored
-            closes = candles["close"].to_numpy(dtype=float)
-            results.append(ScreenResult(
-                symbol=sym,
-                side=side,
-                z_momentum=L,
-                hurst=h,
-                vol=realized_vol(np.diff(np.log(closes))),
-                quote_volume=qv,
-                composite=composite,
-                last_price=float(closes[-1]),
-                horizons_agree=agree,
-            ))
+            if scored is not None:
+                composite, L, h, side, agree = scored
+                closes = candles["close"].to_numpy(dtype=float)
+                results.append(ScreenResult(
+                    symbol=sym, side=side, z_momentum=L, hurst=h,
+                    vol=realized_vol(np.diff(np.log(closes))),
+                    quote_volume=qv, composite=composite,
+                    last_price=float(closes[-1]),
+                    horizons_agree=agree, scale=1))
+            # ---- v3 A1: additional scales (Lee-Mykland 2008 §2.4) ---- #
+            for sf in self.additional_scales:
+                if sf <= 1: continue
+                try:
+                    df_s = _aggregate_to_timeframe(candles, sf)
+                except Exception:
+                    continue
+                if len(df_s) < self.lookback + 4: continue
+                scored_s = self.score(df_s, qv, funding_rate=fr)
+                if scored_s is None: continue
+                composite_s, L_s, h_s, side_s, agree_s = scored_s
+                closes_s = df_s["close"].to_numpy(dtype=float)
+                # Composite is dampened across scales so the native 1h
+                # picks aren't drowned out: dampening = 1/sqrt(scale).
+                damp = 1.0 / float(np.sqrt(sf))
+                results.append(ScreenResult(
+                    symbol=sym, side=side_s, z_momentum=L_s, hurst=h_s,
+                    vol=realized_vol(np.diff(np.log(closes_s))),
+                    quote_volume=qv, composite=composite_s * damp,
+                    last_price=float(closes_s[-1]),
+                    horizons_agree=agree_s, scale=int(sf)))
         results.sort(key=lambda r: abs(r.composite), reverse=True)
         return results[: self.top_n]
+
+
+def _aggregate_to_timeframe(df: pd.DataFrame, factor: int) -> pd.DataFrame:
+    """Aggregate hourly OHLCV into ``factor``-hour bars (Lee-Mykland
+    scale invariance, used by the multi-timeframe screener)."""
+    if factor <= 1 or len(df) < factor:
+        return df
+    n_full = (len(df) // factor) * factor
+    sub = df.iloc[: n_full]
+    blocks = sub.values.reshape(-1, factor, sub.shape[1])
+    opens   = blocks[:, 0, 0]
+    highs   = blocks[:, :, 1].max(axis=1)
+    lows    = blocks[:, :, 2].min(axis=1)
+    closes  = blocks[:, -1, 3]
+    volumes = blocks[:, :, 4].sum(axis=1)
+    new_idx = sub.index[factor - 1:: factor]
+    out = pd.DataFrame({
+        "open": opens, "high": highs, "low": lows,
+        "close": closes, "volume": volumes,
+    }, index=new_idx)
+    out.attrs.update(df.attrs)
+    return out

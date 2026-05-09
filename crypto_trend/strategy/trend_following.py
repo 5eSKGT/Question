@@ -306,6 +306,15 @@ class StrategyParams:
     # ``leader_symbols`` is set at simulator init time from the live
     # universe; default is the canonical liquidity-leader pair.
     leader_symbols: tuple[str, ...] = ("BTC/USDT:USDT", "ETH/USDT:USDT")
+    # ---- v3 A1: multi-timeframe Lee-Mykland scale list ----------- #
+    # Lee & Mykland (2008) JoF 21(6) §2.4 prove the LM null distribution
+    # is asymptotically scale-invariant — the same statistic on
+    # aggregated 4h or 12h bars produces independent jump events at a
+    # different cluster scale. The screener evaluates LM at every
+    # listed scale; the simulator widens the chandelier on long-scale
+    # entries by √scale × ATR (Bandy 2014 §5 vol-scaling). Empty
+    # tuple = single-scale (legacy v2.x).
+    multi_scale_lm_factors: tuple[int, ...] = (4,)
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05
