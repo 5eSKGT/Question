@@ -129,7 +129,7 @@ class StrategySimulator:
         # data loader (live mirror).
         screener = self.screener or WinnerLoserScreener(
             min_quote_volume=0.0,
-            top_n=screener_top_n or 30,
+            top_n=screener_top_n or 10,
         )
 
         positions: dict[str, dict] = {}

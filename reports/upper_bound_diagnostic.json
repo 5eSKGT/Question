@@ -1,0 +1,50 @@
+{
+  "universe_symbols": 313,
+  "years_of_data": 1.0,
+  "raw_stage": {
+    "label": "raw_screener",
+    "n_events": 6800,
+    "events_per_year": 6800.0,
+    "IC_full": -0.1299,
+    "IC_oos_kfold": -0.1297,
+    "IC_oos_std": 0.0318,
+    "IC_oos_95CI": [
+      -0.153,
+      -0.1062
+    ],
+    "IR_magnitude": 10.694,
+    "ann_return_ceiling": 69.625,
+    "event_std": 0.079,
+    "mean_pnl": 0.00025,
+    "pnl_std": 0.079,
+    "pnl_skew": 4.088,
+    "win_rate": 0.3674
+  },
+  "filtered_stage": {
+    "label": "after_strategy_filters",
+    "n_events": 4675,
+    "events_per_year": 4675.0,
+    "IC_full": -0.0887,
+    "IC_oos_kfold": -0.0862,
+    "IC_oos_std": 0.0355,
+    "IC_oos_95CI": [
+      -0.1146,
+      -0.0576
+    ],
+    "IR_magnitude": 5.892,
+    "ann_return_ceiling": 33.246,
+    "event_std": 0.0825,
+    "mean_pnl": 0.00237,
+    "pnl_std": 0.0825,
+    "pnl_skew": 4.609,
+    "win_rate": 0.3775
+  },
+  "IR_ceiling": 5.892,
+  "annualised_return_ceiling": 33.246,
+  "current_actual_IR": 4.16,
+  "TC_current": 0.706,
+  "diagnosis": {
+    "alpha_lives_in_exits_not_signal": "Both raw and filtered IC are NEGATIVE (jumps mean-revert on average over chandelier horizon \u2014 Lo-MacKinlay 1990) yet filtered mean-PnL is POSITIVE. The strategy's profit comes from EXECUTION MECHANICS \u2014 asymmetric chandelier exits and Conviction-Power Kelly sizing nonlinearity \u2014 NOT from the screener's forecasting power. Adding new signal-generating filters has DIMINISHING RETURNS; the highest-leverage improvements are in EXIT MANAGEMENT and POSITION SIZING.",
+    "TC_priority": "TC moderate \u2014 marginal sizing/leverage gains remain; new signal classes give diminishing returns."
+  }
+}
