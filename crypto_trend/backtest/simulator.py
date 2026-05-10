@@ -478,11 +478,18 @@ class StrategySimulator:
                     confidence_exponent=p.confidence_exponent,
                 )
                 size = decision.fraction
-                # Predictor used for the calibrator: sign-aware
-                # confidence² (matches optimal_position's amp).
+                # Predictor used for the calibrator is the UNSIGNED
+                # confidence² (magnitude). The realised pnl fed to
+                # the calibrator is already side-aligned (multiplied
+                # by side_sign at exit). If we also signed the
+                # predictor, sign(pred)·pnl = side²·log = raw log
+                # return — losing the side-alignment and producing
+                # uniformly-zero per-bin Kelly fractions. Keeping the
+                # predictor positive makes sign(pred)·pnl = pnl =
+                # side-aligned realisation, which is what the per-bin
+                # μ_b/σ_b² formula expects.
                 conf = decision.confidence
-                pred_sign = 1.0 if fire_long else -1.0
-                predictor = pred_sign * conf * conf
+                predictor = conf * conf
                 # ---- v3 B: OOS-calibrated rolling per-bin Kelly ---- #
                 # When the calibrator is enabled AND warm, override the
                 # analytical sizer's |size| with the per-bin Kelly
