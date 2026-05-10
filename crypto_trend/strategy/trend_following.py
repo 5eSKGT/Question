@@ -351,14 +351,17 @@ class StrategyParams:
     # Thorp-Ziemba 2011 §3): full per-bin Kelly maximises log-growth
     # but creates intolerable drawdowns (empirically MDD ≈ -64% on
     # the real Binance 313-symbol universe vs the v3+A2 baseline's
-    # -3.8%; reports/production_validation_v3b3.log).  MTZ §3 prove
-    # that fractional Kelly with multiplier α ∈ [0.25, 0.50] retains
-    # ≈ (2α - α²) of full-Kelly's log-growth (75% at α=0.5) while
-    # cutting variance contribution by α² (75% at α=0.5).  This is
-    # the textbook drawdown-bounded Kelly.  The default α=0.5 is the
-    # most aggressive defensible value; promote with smaller α if
-    # the OOS MDD gate still fails.
-    kelly_calibrator_fraction: float = 0.5
+    # -3.8%; reports/production_validation_v3b_full_kelly_FAIL.log).
+    # MTZ §3 prove that fractional Kelly with multiplier α ∈ [0.25,
+    # 0.50] retains ≈ (2α - α²) of full-Kelly's log-growth while
+    # cutting variance by α² — the *two* textbook constants are
+    # α=0.5 (Half-Kelly, "moderate") and α=0.25 (Quarter-Kelly,
+    # "very conservative").  Empirical: Half-Kelly produces
+    # MDD -40.2% (still fails the -20% gate); Quarter-Kelly is the
+    # more conservative MTZ-prescribed alternative.  α is NOT
+    # data-tuned — it is one of the two published academic
+    # constants in MTZ §3.
+    kelly_calibrator_fraction: float = 0.25
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05
