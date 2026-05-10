@@ -160,6 +160,26 @@ class StrategySimulator:
         # Maps side ("long" / "short") → list of (bar_idx, leader_sym)
         # within the rolling decay window.
         leader_jump_history: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
+
+        # v3 B: OOS-calibrated rolling per-bin Kelly sizer (only if
+        # ``StrategyParams.kelly_calibrator_enabled``). The same object
+        # is shared across all symbols — it learns universe-wide
+        # per-predictor-bin (μ, σ²) statistics. Closed-trade pnl is
+        # fed back at exit; entry size is taken from the calibrator
+        # when warm, falling back to the analytical Conviction-Power
+        # Kelly otherwise.
+        kelly_calibrator = None
+        if p.kelly_calibrator_enabled:
+            from ..risk.kelly_calibrator import KellyCalibrator
+            kelly_calibrator = KellyCalibrator(
+                n_bins=p.kelly_calibrator_bins,
+                lookback_trades=p.kelly_calibrator_lookback,
+                min_per_bin=p.kelly_calibrator_min_per_bin,
+                sizing_cap=p.sizing_cap,
+            )
+        # Map (sym, entry_idx) → predictor used at entry, so we can
+        # feed the realised pnl back to the calibrator at exit.
+        entry_predictor: dict[tuple[str, int], float] = {}
         rescreen_history: list[tuple[int, int, int]] = []
 
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
@@ -285,6 +305,17 @@ class StrategySimulator:
                                 bars_held=bars_in_pos,
                                 exit_reason=reason,
                             ))
+                            # Feed the calibrator with the closed trade.
+                            if kelly_calibrator is not None:
+                                key = (sym, leg["entry_idx"])
+                                pred = entry_predictor.pop(key, None)
+                                if pred is not None:
+                                    # Side-aligned realised log return
+                                    # (PnL on a unit-size position).
+                                    realised_log = side_sign * float(
+                                        np.log(exit_px / leg["entry_px"]))
+                                    kelly_calibrator.add_trade(
+                                        pred, realised_log)
                         else:
                             surviving.append(leg)
                     if surviving:
@@ -431,6 +462,26 @@ class StrategySimulator:
                     confidence_exponent=p.confidence_exponent,
                 )
                 size = decision.fraction
+                # Predictor used for the calibrator: sign-aware
+                # confidence² (matches optimal_position's amp).
+                conf = decision.confidence
+                pred_sign = 1.0 if fire_long else -1.0
+                predictor = pred_sign * conf * conf
+                # ---- v3 B: OOS-calibrated rolling per-bin Kelly ---- #
+                # When the calibrator is enabled AND warm, override the
+                # analytical sizer's |size| with the per-bin Kelly
+                # f_b = μ_b/σ_b² estimated from rolling OOS history.
+                # When not warm OR not enabled, the analytical
+                # Conviction-Power Kelly stays in force as the
+                # bootstrap (no behaviour change in cold start).
+                if kelly_calibrator is not None and kelly_calibrator.is_warm():
+                    f_signed = kelly_calibrator.kelly_fraction(predictor)
+                    f_abs = abs(f_signed)
+                    # Apply the same per-leg risk fractioning as the
+                    # analytical sizer so pyramiding is consistent.
+                    f_abs = f_abs / max(1, p.max_pyramid_legs)
+                    if f_abs > 0:
+                        size = float(min(f_abs, p.sizing_cap))
                 if size <= 0:
                     continue
                 # Cap so total exposure respects sizing_cap.
@@ -450,6 +501,10 @@ class StrategySimulator:
                     trough=float(close),
                     scale=int(pick_scale),
                 ))
+                # Record the predictor used so the calibrator can
+                # ingest the realised pnl when this leg exits.
+                if kelly_calibrator is not None:
+                    entry_predictor[(sym, t)] = float(predictor)
                 consumed_pulse_bar[sym] = t
 
             if positions:

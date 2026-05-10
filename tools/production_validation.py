@@ -174,6 +174,9 @@ def main() -> int:
     p.add_argument("--test-days", type=int, default=7)
     p.add_argument("--data-source", choices=["synth", "real"], default="real",
                     help="real = parquet cache built by tools/fetch_binance_real.py")
+    p.add_argument("--enable-kelly-calibrator", action="store_true",
+                    help="enable the rolling per-bin OOS Kelly sizer "
+                         "(Cover-Thomas 1991 §16; default off)")
     args = p.parse_args()
 
     real_pool: dict | None = None
@@ -186,7 +189,7 @@ def main() -> int:
         print(f"Real-data universe: {len(real_pool)} symbols, "
               f"~{len(next(iter(real_pool.values())))} bars each")
 
-    base = StrategyParams()
+    base = StrategyParams(kelly_calibrator_enabled=bool(args.enable_kelly_calibrator))
 
     # --- 1) Baseline canonical params -------------------------------- #
     base_verdict = _run_and_judge("Canonical (committed) StrategyParams",

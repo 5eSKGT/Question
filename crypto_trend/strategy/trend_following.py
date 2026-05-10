@@ -326,6 +326,27 @@ class StrategyParams:
     # retained for future re-evaluation with funding-aware exits or
     # alternative scale sets.
     multi_scale_lm_factors: tuple[int, ...] = ()
+    # ---- v3 B: OOS-calibrated rolling per-bin Kelly sizer -------- #
+    # Markowitz (1952) / Cover & Thomas (1991, ch. 16) conditional log-
+    # optimal portfolio: when per-event μ_i/σ_i² varies, full Kelly is
+    # f_i* = μ_i / σ_i² (NOT the homogeneous μ̄/σ̄²). The committed
+    # Conviction-Power Kelly amp ∝ confidence^k uses a fixed exponent;
+    # the calibrator estimates per-|predictor|-bin (μ_b, σ_b²) from a
+    # rolling window of recent realised trades and sizes each new
+    # event at f_b = μ_b/σ_b² directly.
+    #
+    # Anti-overfitting safeguards (see kelly_calibrator.py docstring):
+    #   1. Rolling 300-trade window (forgets non-stationary regimes)
+    #   2. min 20 trades per bin (sparse bins fall back to analytical)
+    #   3. Hard sizing_cap on f_b (no run-away leverage)
+    #   4. Bootstrap fallback to Conviction-Power Kelly until warm
+    #   5. Live = backtest parity (same calibrator object on both)
+    #
+    # Set to False to keep the analytical sizer (legacy v3+A2 baseline).
+    kelly_calibrator_enabled: bool = False
+    kelly_calibrator_bins: int = 6
+    kelly_calibrator_lookback: int = 300
+    kelly_calibrator_min_per_bin: int = 20
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05
