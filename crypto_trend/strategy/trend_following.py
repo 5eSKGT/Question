@@ -312,9 +312,20 @@ class StrategyParams:
     # aggregated 4h or 12h bars produces independent jump events at a
     # different cluster scale. The screener evaluates LM at every
     # listed scale; the simulator widens the chandelier on long-scale
-    # entries by √scale × ATR (Bandy 2014 §5 vol-scaling). Empty
-    # tuple = single-scale (legacy v2.x).
-    multi_scale_lm_factors: tuple[int, ...] = (4,)
+    # entries by √scale × ATR (Bandy 2014 §5 vol-scaling).
+    #
+    # OOS VERDICT: tested with multi_scale_lm_factors=(4,) on the
+    # real Binance universe (reports/production_validation_v3_a1a2.log),
+    # canonical Sharpe 3.78 → 2.53, win-rate 43.7% → 37.4% (FAIL).
+    # Even with the √scale × ATR scale-aware chandelier (Bandy 2014),
+    # the empirical 4h scale lift measured by upper_bound_analysis
+    # (positive IC +0.20 but negative mean PnL under 1h-bar exits)
+    # does NOT translate to gate-passing realised performance — A1
+    # HYPOTHESIS REJECTED on this universe at this horizon. Default
+    # is now empty tuple (single-scale LM); the multi-scale code is
+    # retained for future re-evaluation with funding-aware exits or
+    # alternative scale sets.
+    multi_scale_lm_factors: tuple[int, ...] = ()
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05

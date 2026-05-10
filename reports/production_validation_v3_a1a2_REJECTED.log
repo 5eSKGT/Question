@@ -1,0 +1,41 @@
+Real-data universe: 313 symbols, ~4188 bars each
+
+=== Canonical (committed) StrategyParams ===
+  seed  0: AP ret=+0.039 sr=+2.53 mdd=-0.046 trades=270
+  median_sharpe = +2.535 (PASS)
+  p95_mdd       = -0.046 (PASS)
+  AP sortino    = +2.639  vs Naive -1.010 (PASS)
+  median_trades = 270.0 (PASS)
+  win_rate      = 0.374 (over 270 trades) (FAIL)
+  → ❌ FAIL
+
+=== Parameter robustness (±20%) ===
+
+=== risk_per_trade −20% ===
+  seed  0: AP ret=+0.031 sr=+2.53 mdd=-0.037 trades=270
+  median_sharpe = +2.535 (PASS)
+  p95_mdd       = -0.037 (PASS)
+  AP sortino    = +2.639  vs Naive -1.010 (PASS)
+  median_trades = 270.0 (PASS)
+  win_rate      = 0.374 (over 270 trades) (FAIL)
+  → ❌ FAIL
+
+=== risk_per_trade +20% ===
+  seed  0: AP ret=+0.047 sr=+2.53 mdd=-0.055 trades=270
+  median_sharpe = +2.535 (PASS)
+  p95_mdd       = -0.055 (PASS)
+  AP sortino    = +2.639  vs Naive -1.010 (PASS)
+  median_trades = 270.0 (PASS)
+  win_rate      = 0.374 (over 270 trades) (FAIL)
+  → ❌ FAIL
+
+=== conf_exp 1.5 ===
+  seed  0: AP ret=+0.027 sr=+1.80 mdd=-0.045 trades=270
+  median_sharpe = +1.801 (PASS)
+  p95_mdd       = -0.045 (PASS)
+  AP sortino    = +1.866  vs Naive -1.010 (PASS)
+  median_trades = 270.0 (PASS)
+  win_rate      = 0.374 (over 270 trades) (FAIL)
+  → ❌ FAIL
+
+=== conf_exp 2.5 ===
