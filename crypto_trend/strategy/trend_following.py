@@ -347,6 +347,18 @@ class StrategyParams:
     kelly_calibrator_bins: int = 6
     kelly_calibrator_lookback: int = 300
     kelly_calibrator_min_per_bin: int = 20
+    # Fractional-Kelly multiplier on the calibrator's f_b (MacLean-
+    # Thorp-Ziemba 2011 §3): full per-bin Kelly maximises log-growth
+    # but creates intolerable drawdowns (empirically MDD ≈ -64% on
+    # the real Binance 313-symbol universe vs the v3+A2 baseline's
+    # -3.8%; reports/production_validation_v3b3.log).  MTZ §3 prove
+    # that fractional Kelly with multiplier α ∈ [0.25, 0.50] retains
+    # ≈ (2α - α²) of full-Kelly's log-growth (75% at α=0.5) while
+    # cutting variance contribution by α² (75% at α=0.5).  This is
+    # the textbook drawdown-bounded Kelly.  The default α=0.5 is the
+    # most aggressive defensible value; promote with smaller α if
+    # the OOS MDD gate still fails.
+    kelly_calibrator_fraction: float = 0.5
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05

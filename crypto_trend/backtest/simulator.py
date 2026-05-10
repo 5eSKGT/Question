@@ -500,6 +500,10 @@ class StrategySimulator:
                 if kelly_calibrator is not None and kelly_calibrator.is_warm():
                     f_signed = kelly_calibrator.kelly_fraction(predictor)
                     f_abs = abs(f_signed)
+                    # MacLean-Thorp-Ziemba 2011 §3 fractional Kelly:
+                    # scale full per-bin Kelly by α ∈ [0.25, 0.5] for
+                    # drawdown-bounded log-growth optimisation.
+                    f_abs = f_abs * float(p.kelly_calibrator_fraction)
                     # Apply the same per-leg risk fractioning as the
                     # analytical sizer so pyramiding is consistent.
                     f_abs = f_abs / max(1, p.max_pyramid_legs)

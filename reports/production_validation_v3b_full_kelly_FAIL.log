@@ -1,0 +1,32 @@
+Real-data universe: 313 symbols, ~4188 bars each
+
+=== Canonical (committed) StrategyParams ===
+  seed  0: AP ret=+1.227 sr=+2.01 mdd=-0.641 trades=302
+  median_sharpe = +2.012 (PASS)
+  p95_mdd       = -0.641 (FAIL)
+  AP sortino    = +2.021  vs Naive -1.010 (PASS)
+  median_trades = 302.0 (PASS)
+  win_rate      = 0.437 (over 302 trades) (PASS)
+  → ❌ FAIL
+
+=== Parameter robustness (±20%) ===
+
+=== risk_per_trade −20% ===
+  seed  0: AP ret=+1.203 sr=+1.99 mdd=-0.641 trades=302
+  median_sharpe = +1.987 (PASS)
+  p95_mdd       = -0.641 (FAIL)
+  AP sortino    = +1.994  vs Naive -1.010 (PASS)
+  median_trades = 302.0 (PASS)
+  win_rate      = 0.437 (over 302 trades) (PASS)
+  → ❌ FAIL
+
+=== risk_per_trade +20% ===
+  seed  0: AP ret=+1.252 sr=+2.04 mdd=-0.641 trades=302
+  median_sharpe = +2.038 (PASS)
+  p95_mdd       = -0.641 (FAIL)
+  AP sortino    = +2.047  vs Naive -1.010 (PASS)
+  median_trades = 302.0 (PASS)
+  win_rate      = 0.437 (over 302 trades) (PASS)
+  → ❌ FAIL
+
+=== conf_exp 1.5 ===
