@@ -73,6 +73,15 @@ class StrategySimulator:
     taker_fee: float = 6e-4
     slippage_bps: float = 1.0
     bars_per_year: float = 365 * 24
+    # v3 B: persistent KellyCalibrator across walk-forward windows.
+    # walk_forward_run.py calls ``sim.run()`` once per OOS test window
+    # (default 7 days) — without persistence the calibrator would
+    # only see the few trades inside one window and never warm up.
+    # Storing it on the simulator instance keeps the rolling 300-trade
+    # history alive across windows, so by the time we reach later
+    # OOS windows the calibrator has trained on prior-OOS realisations
+    # only (strict purging — past trades inform future sizing).
+    kelly_calibrator: object | None = None
     # rescreen_every=1 mirrors the live engine, which calls the screener
     # once per bar (= once per cycle with 1h timeframe).
     rescreen_every: int = 1
@@ -161,22 +170,20 @@ class StrategySimulator:
         # within the rolling decay window.
         leader_jump_history: dict[str, list[tuple[int, str]]] = {"long": [], "short": []}
 
-        # v3 B: OOS-calibrated rolling per-bin Kelly sizer (only if
-        # ``StrategyParams.kelly_calibrator_enabled``). The same object
-        # is shared across all symbols — it learns universe-wide
-        # per-predictor-bin (μ, σ²) statistics. Closed-trade pnl is
-        # fed back at exit; entry size is taken from the calibrator
-        # when warm, falling back to the analytical Conviction-Power
-        # Kelly otherwise.
-        kelly_calibrator = None
-        if p.kelly_calibrator_enabled:
+        # v3 B: OOS-calibrated rolling per-bin Kelly sizer. Lazily
+        # created on the FIRST run() call (so the calibrator persists
+        # across walk-forward windows — see ``self.kelly_calibrator``
+        # field docstring). Disabled if
+        # ``StrategyParams.kelly_calibrator_enabled`` is False.
+        if p.kelly_calibrator_enabled and self.kelly_calibrator is None:
             from ..risk.kelly_calibrator import KellyCalibrator
-            kelly_calibrator = KellyCalibrator(
+            self.kelly_calibrator = KellyCalibrator(
                 n_bins=p.kelly_calibrator_bins,
                 lookback_trades=p.kelly_calibrator_lookback,
                 min_per_bin=p.kelly_calibrator_min_per_bin,
                 sizing_cap=p.sizing_cap,
             )
+        kelly_calibrator = self.kelly_calibrator if p.kelly_calibrator_enabled else None
         # Map (sym, entry_idx) → predictor used at entry, so we can
         # feed the realised pnl back to the calibrator at exit.
         entry_predictor: dict[tuple[str, int], float] = {}
