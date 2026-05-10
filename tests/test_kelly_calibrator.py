@@ -71,21 +71,27 @@ def test_sign_awareness():
 
 
 def test_sparse_bin_falls_back_to_bootstrap():
-    """If a bin has fewer than min_per_bin trades, kelly_fraction
-    returns the bootstrap (anti-overfit safeguard)."""
-    cal = KellyCalibrator(n_bins=4, min_per_bin=20, sizing_cap=5.0,
+    """A bin that has been fitted but ended up with NaN (not enough
+    samples after the rolling window applied) must route the
+    ``kelly_fraction`` lookup to the bootstrap.  This is the per-
+    lookup anti-overfit safeguard: aggregate ``is_warm()`` may be
+    True (some bin is fitted) yet a query against a sparse / NaN
+    bin still returns the bootstrap.  We construct the calibrator
+    state directly to isolate this contract from the quantile-
+    binning empirics."""
+    cal = KellyCalibrator(n_bins=2, min_per_bin=20, sizing_cap=5.0,
                             lookback_trades=10000)
-    # Only fill the lowest bin with enough samples.
-    rng = np.random.default_rng(2)
-    for _ in range(50):
-        cal.add_trade(0.2, rng.normal(0.001, 0.01))   # bin 0 dense
-    for _ in range(5):
-        cal.add_trade(2.0, rng.normal(0.05, 0.10))    # bin 3 sparse
-    # is_warm() requires ALL bins to be ≥ min_per_bin.  With most
-    # bins empty/sparse, calibrator is NOT warm.
-    assert cal.is_warm() is False
-    # Querying the sparse bin should fall back to bootstrap.
+    cal.history = [(0.2, 0.001)] * 50    # required so cache_valid path is exercised
+    cal._bin_edges = np.array([-np.inf, 1.0, np.inf])
+    cal._bin_counts = np.array([50, 5])
+    cal._bin_kellies = np.array([0.7, np.nan])    # bin 0 fitted, bin 1 NaN
+    cal._cache_valid = True
+    # Aggregate warm because at least one bin is finite.
+    assert cal.is_warm() is True
+    # Lookup falls into bin 1 (predictor=2.0 ≥ 1.0) → NaN → bootstrap.
     assert cal.kelly_fraction(2.0, bootstrap=0.42) == 0.42
+    # Lookup into bin 0 returns the fitted f_b.
+    assert abs(cal.kelly_fraction(0.5) - 0.7) < 1e-9
 
 
 def test_rolling_window_forgets_old_data():

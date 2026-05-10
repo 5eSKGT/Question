@@ -172,12 +172,25 @@ class KellyCalibrator:
 
     # ------------------------------------------------------------------ #
     def is_warm(self) -> bool:
-        # Trigger lazy refit so callers asking "are you warm?" before
-        # any kelly_fraction() call get the correct answer.
+        """The calibrator is "warm" if at least ONE bin has been
+        successfully fit (≥ min_per_bin samples and σ > 0).  Sparse
+        bins are handled per-lookup via the NaN-aware bootstrap
+        fallback inside ``kelly_fraction``; requiring every bin to
+        be populated is too strict because (a) bin 0 is permanently
+        empty under quantile-edge handling (digitize sends the
+        minimum predictor value into bin 1) and (b) the empirical
+        predictor distribution is naturally discrete (the
+        ``signal_confidence`` formula multiplies a clipped LM ratio
+        by an integer-quantised agree fraction), so middle bins are
+        chronically sparse.  The calibrator extracts useful per-bin
+        Kelly fractions long before every bin is dense, and the
+        sparse-bin fallback to bootstrap preserves the OOS
+        anti-overfit guarantee."""
         if not self._cache_valid:
             self._refit()
-        return (self._bin_kellies is not None
-                and bool((self._bin_counts >= self.min_per_bin).all()))
+        if self._bin_kellies is None:
+            return False
+        return bool(np.isfinite(self._bin_kellies).any())
 
     def diagnostics(self) -> dict:
         if not self._cache_valid:
