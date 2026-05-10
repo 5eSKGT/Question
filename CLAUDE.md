@@ -54,6 +54,34 @@ chandelier_mult=3.0 고정값. 변동성/Hawkes-decay 조건부 적응형 chande
 ### P3 — Breadth utilisation
 필터 통과 이벤트 4,675/yr 중 실제 trade = 332/yr → **7% 활용률**. Position-blocking + CVaR floor 가 4,343 이벤트를 reject. Faber (2007) pyramiding within cluster 같은 학술 정합 방안만 고려. 단, 동일 방향 누적 노출은 risk_per_trade 를 같은 비율로 분할해야 (Kelly 일치).
 
+### Heterogeneous Kelly study (Markowitz 1952 / Cover-Thomas 1991 / MTZ 2011 §3)
+
+`tools/upper_bound_analysis.py` 가 측정한 **heterogeneous Kelly 천장** 은
+homogeneous Kelly (588%/yr) 의 142× = +83,779%/yr. 이는 신호 강도 빈에 따라
+*per-bin Kelly fraction f_b = μ_b/σ_b²* 를 적용하는 *signal-conditional sizer*
+가 도달 가능한 이론 천장.
+
+`crypto_trend/risk/kelly_calibrator.py` 가 이를 OOS-rolling 방식으로 구현
+(rolling 300-trade window, purged, sparse-bin bootstrap fallback). 풀-유니버스
+검증 결과:
+
+| α (MTZ §3) | 수익률 | Sharpe | MDD | 게이트 |
+|---|---|---|---|---|
+| 1.00 (Full) | +122.7% | 2.01 | −64.1% | ❌ FAIL |
+| 0.50 (Half) | +53.4% | 2.14 | −40.2% | ❌ FAIL |
+| 0.25 (Quarter) | +27.3% | 2.38 | −22.8% | ❌ FAIL (by 2.8pp) |
+| 0 (analytical, v3+A2) | +7.9% | 3.78 | −3.8% | ✅ PASS |
+
+**REJECTION 이유**: MTZ 2011 §3 가 published 한 *두* 상수 (Half=0.5, Quarter=0.25)
+모두 −20% MDD 게이트를 초과. α 를 더 낮추는 것은 *parameter-tuning into the gate*
+= overfit (절대 금지). 따라서 데이터에 진짜 alpha 가 있음에도 (3.4× return at
+α=0.25), 현재 risk budget 안에서 추출 불가능.
+
+**보존 이유**: 사용자가 후일 risk budget 을 −30% MDD 로 완화하기로 결정 시,
+`StrategyParams.kelly_calibrator_enabled=True` 한 줄로 즉시 활용 가능.
+모든 anti-overfit safeguards (rolling 300 window, min_per_bin=20, sizing_cap,
+bootstrap fallback) 는 코드에 있음.
+
 ### P4 — 시그널 클래스 추가 시 엄격한 정합성 기준
 IC 가 음수라는 측정 결과는 *현재 사용 중인 단일-스케일 LM 시그널의 한계*만 말한다. 다음 두 종류는 구분된다:
 

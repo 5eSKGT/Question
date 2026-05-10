@@ -343,24 +343,31 @@ class StrategyParams:
     #   5. Live = backtest parity (same calibrator object on both)
     #
     # Set to False to keep the analytical sizer (legacy v3+A2 baseline).
+    #
+    # OOS VERDICT (real Binance USDT-Perp 313 × 1y):
+    #   α=1.00 (full Kelly):   ret +122.7%   MDD -64.1%   FAIL (P95-MDD)
+    #   α=0.50 (Half-Kelly):   ret  +53.4%   MDD -40.2%   FAIL
+    #   α=0.25 (Quarter-Kelly):ret  +27.3%   MDD -22.8%   FAIL (by 2.8pp)
+    #   α=0 (analytical/v3+A2):ret   +7.9%   MDD  -3.8%   PASS
+    #
+    # The calibrator extracts a real heterogeneous-Kelly lift
+    # (3.4× return at Quarter-Kelly), confirming the upper-bound
+    # diagnostic — but BOTH MTZ 2011 §3 published constants
+    # (α=0.5 and α=0.25) fail the -20% MDD gate. Going below
+    # α=0.25 would be parameter-tuning into the gate, which
+    # CLAUDE.md North Star §2 forbids.  HYPOTHESIS REJECTED at
+    # the current −20% MDD risk budget.  The code path is
+    # preserved (default OFF) so a future risk-budget relaxation
+    # (e.g. user accepting −30% MDD for higher returns) can
+    # promote it via a single ``kelly_calibrator_enabled=True``.
     kelly_calibrator_enabled: bool = False
     kelly_calibrator_bins: int = 6
     kelly_calibrator_lookback: int = 300
     kelly_calibrator_min_per_bin: int = 20
     # Fractional-Kelly multiplier on the calibrator's f_b (MacLean-
-    # Thorp-Ziemba 2011 §3): full per-bin Kelly maximises log-growth
-    # but creates intolerable drawdowns (empirically MDD ≈ -64% on
-    # the real Binance 313-symbol universe vs the v3+A2 baseline's
-    # -3.8%; reports/production_validation_v3b_full_kelly_FAIL.log).
-    # MTZ §3 prove that fractional Kelly with multiplier α ∈ [0.25,
-    # 0.50] retains ≈ (2α - α²) of full-Kelly's log-growth while
-    # cutting variance by α² — the *two* textbook constants are
-    # α=0.5 (Half-Kelly, "moderate") and α=0.25 (Quarter-Kelly,
-    # "very conservative").  Empirical: Half-Kelly produces
-    # MDD -40.2% (still fails the -20% gate); Quarter-Kelly is the
-    # more conservative MTZ-prescribed alternative.  α is NOT
-    # data-tuned — it is one of the two published academic
-    # constants in MTZ §3.
+    # Thorp-Ziemba 2011 §3).  Default 0.25 (Quarter-Kelly, the more
+    # conservative of the two MTZ-published constants).  Used only
+    # when ``kelly_calibrator_enabled=True``.
     kelly_calibrator_fraction: float = 0.25
 
     # ---- risk + sizing params (committed strategy identity) ------ #
