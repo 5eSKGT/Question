@@ -82,6 +82,13 @@ class StrategySimulator:
     # OOS windows the calibrator has trained on prior-OOS realisations
     # only (strict purging — past trades inform future sizing).
     kelly_calibrator: object | None = None
+    # entry_predictor must ALSO persist across windows: a leg opened
+    # in window N may exit in window N+1 (chandelier or mark-out). If
+    # entry_predictor were a local in run() its key would be lost
+    # between windows and the calibrator would miss roughly half of
+    # all closed trades. Persisting on self keeps the (sym, entry_idx)
+    # → predictor map valid for the full simulation lifetime.
+    entry_predictor: dict = field(default_factory=dict)
     # rescreen_every=1 mirrors the live engine, which calls the screener
     # once per bar (= once per cycle with 1h timeframe).
     rescreen_every: int = 1
@@ -184,9 +191,11 @@ class StrategySimulator:
                 sizing_cap=p.sizing_cap,
             )
         kelly_calibrator = self.kelly_calibrator if p.kelly_calibrator_enabled else None
-        # Map (sym, entry_idx) → predictor used at entry, so we can
-        # feed the realised pnl back to the calibrator at exit.
-        entry_predictor: dict[tuple[str, int], float] = {}
+        # Use the persistent self.entry_predictor (typed map of
+        # (sym, entry_idx) → predictor) so legs that span windows
+        # don't lose their predictor reference between sim.run()
+        # invocations.
+        entry_predictor = self.entry_predictor
         rescreen_history: list[tuple[int, int, int]] = []
 
         cost_per_fill = self.taker_fee + self.slippage_bps * 1e-4
@@ -517,7 +526,9 @@ class StrategySimulator:
             if positions:
                 bars_with_position += 1
 
-        # Mark out anything still open (per-leg)
+        # Mark out anything still open (per-leg). Feed the calibrator
+        # too so mark-out exits don't silently bypass OOS calibration
+        # (a 35-50% feedback gap was the dormancy bug).
         for sym, legs in list(positions.items()):
             close = pre[sym].closes[-1]
             for leg in legs:
@@ -534,6 +545,11 @@ class StrategySimulator:
                     bars_held=n_bars - 1 - leg["entry_idx"],
                     exit_reason="mark_out",
                 ))
+                if kelly_calibrator is not None:
+                    pred = entry_predictor.pop((sym, leg["entry_idx"]), None)
+                    if pred is not None:
+                        realised_log = side_sign * float(np.log(close / leg["entry_px"]))
+                        kelly_calibrator.add_trade(pred, realised_log)
 
         exposure = bars_with_position / max(n_bars - warmup_bars, 1)
 
