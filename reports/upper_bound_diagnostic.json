@@ -43,6 +43,25 @@
   "annualised_return_ceiling": 33.246,
   "current_actual_IR": 4.16,
   "TC_current": 0.706,
+  "homogeneous_filtered_kelly": {
+    "per_event_log_growth": 0.000413,
+    "annual_log_growth": 1.9295,
+    "annual_return_pct": 588.6
+  },
+  "heterogeneous_filtered_kelly": {
+    "status": "ok",
+    "annual_log_growth_OOS": 6.732,
+    "annual_return_ceiling_pct": 83779.3,
+    "n_bins_evaluated": 30,
+    "n_events_per_fold_avg": 935.0
+  },
+  "heterogeneous_raw_kelly": {
+    "status": "ok",
+    "annual_log_growth_OOS": 13.1151,
+    "annual_return_ceiling_pct": 49637722.8,
+    "n_bins_evaluated": 30,
+    "n_events_per_fold_avg": 1360.0
+  },
   "diagnosis": {
     "alpha_lives_in_exits_not_signal": "Both raw and filtered IC are NEGATIVE (jumps mean-revert on average over chandelier horizon \u2014 Lo-MacKinlay 1990) yet filtered mean-PnL is POSITIVE. The strategy's profit comes from EXECUTION MECHANICS \u2014 asymmetric chandelier exits and Conviction-Power Kelly sizing nonlinearity \u2014 NOT from the screener's forecasting power. Adding new signal-generating filters has DIMINISHING RETURNS; the highest-leverage improvements are in EXIT MANAGEMENT and POSITION SIZING.",
     "TC_priority": "TC moderate \u2014 marginal sizing/leverage gains remain; new signal classes give diminishing returns."

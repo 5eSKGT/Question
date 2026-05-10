@@ -346,17 +346,8 @@ def main() -> int:
         ann_ret_ceiling = raw_summary["ann_return_ceiling"]
     tc_current = args.actual_ir / ir_ceiling if ir_ceiling > 0 else float("nan")
 
-    out = {
-        "universe_symbols":   len(pool),
-        "years_of_data":      round(years, 3),
-        "raw_stage":          raw_summary,
-        "filtered_stage":     filt_summary,
-        "IR_ceiling":         round(ir_ceiling, 3),
-        "annualised_return_ceiling": round(ann_ret_ceiling, 3),
-        "current_actual_IR":  args.actual_ir,
-        "TC_current":         round(tc_current, 3),
-        "diagnosis": {},
-    }
+    # `out` dict construction deferred until after homogeneous +
+    # heterogeneous Kelly computations below.
 
     # ---- Per-trade expectancy (chandelier asymmetry effect) -------- #
     # Mean realised PnL ON FILTERED EVENTS is the cleanest measure of
@@ -385,6 +376,116 @@ def main() -> int:
         filt_summary["pnl_std"]  = round(filt_pnl_std, 4)
         filt_summary["pnl_skew"] = round(filt_skew, 3)
         filt_summary["win_rate"] = round(filt_win_rate, 4)
+
+    # ---- HETEROGENEOUS Kelly ceiling (signal-conditional) ---------- #
+    # Markowitz (1952) + Cover & Thomas (1991, Elements of Information
+    # Theory, Ch. 16) conditional log-optimal portfolio: when per-event
+    # μ_i/σ_i² varies, the achievable annual log-growth is
+    #
+    #     G_het = Σ_i 0.5 · (μ_i / σ_i)²
+    #
+    # which by Jensen's inequality is STRICTLY greater than the
+    # homogeneous-Kelly aggregate
+    #
+    #     G_hom = N · 0.5 · (μ̄ / σ̄)²
+    #
+    # whenever μ_i/σ_i has any variance across events. The committed
+    # Conviction-Power Kelly amp ∝ confidence^k IS a heterogeneous
+    # sizer — but the homogeneous ceiling I previously reported
+    # under-counts the achievable G_het by ignoring the per-event
+    # variation it can extract.
+    #
+    # Empirical estimator: bin filtered events by an ex-ante predictor
+    # (|LM| × agree, the same composite the strategy uses), compute
+    # per-bin (μ_b, σ_b) on OOS k-folds (purged), and sum:
+    #
+    #     G_het_OOS  =  Σ_b  n_b · 0.5 · (μ_b / σ_b)²
+    #
+    # This is the *predictor-conditional* Kelly ceiling: how much
+    # growth a *perfectly-calibrated* signal-conditional sizer could
+    # extract given the predictor we have. It bounds the strategy
+    # achievable IR from above, more tightly than the homogeneous
+    # ceiling.
+
+    def _het_ceiling(forecasts: np.ndarray, realised: np.ndarray,
+                       n_bins: int = 6, k_folds: int = 5) -> dict:
+        if forecasts.size < 200:
+            return {"status": "insufficient_data", "n": int(forecasts.size)}
+        # OOS purged k-fold: train bin edges on (k-1) folds, evaluate
+        # bin (μ, σ) on the held-out fold. Sum growth over folds.
+        n = forecasts.size
+        fold_size = n // k_folds
+        per_bin_growth = []
+        per_bin_n = []
+        for f in range(k_folds):
+            a = f * fold_size; b = (f + 1) * fold_size if f < k_folds - 1 else n
+            test_idx = slice(a, b)
+            train_idx = list(range(a)) + list(range(b, n))
+            x_train = forecasts[train_idx]; y_train = realised[train_idx]
+            x_test  = forecasts[a:b];  y_test  = realised[a:b]
+            if x_test.size < 20: continue
+            edges = np.quantile(np.abs(x_train), np.linspace(0, 1, n_bins + 1))
+            edges[0] = -np.inf; edges[-1] = np.inf
+            bin_idx = np.digitize(np.abs(x_test), edges) - 1
+            bin_idx = np.clip(bin_idx, 0, n_bins - 1)
+            for b_id in range(n_bins):
+                mask = bin_idx == b_id
+                if mask.sum() < 5: continue
+                # Sign-aware: bin pnl by sign of forecast (apply forecast
+                # sign so realised becomes "side-aligned").
+                bin_pnl = np.sign(x_test[mask]) * y_test[mask]
+                mu_b = float(bin_pnl.mean())
+                sd_b = float(bin_pnl.std())
+                if sd_b < 1e-9: continue
+                per_bin_growth.append(0.5 * (mu_b / sd_b) ** 2)
+                per_bin_n.append(int(mask.sum()))
+        if not per_bin_growth:
+            return {"status": "insufficient_bins"}
+        # Aggregate (per-event) and annualised. Each bin contributes
+        # n_b · 0.5 · (μ_b/σ_b)². Sum across bins and folds, divide by
+        # k_folds to get per-fold expectation, then scale to per-year
+        # by multiplying by total events / 1y.
+        total_growth = sum(g * n for g, n in zip(per_bin_growth, per_bin_n))
+        annual = total_growth / k_folds
+        return {
+            "status": "ok",
+            "annual_log_growth_OOS": round(float(annual), 4),
+            "annual_return_ceiling_pct": round(
+                float((np.exp(annual) - 1.0) * 100.0), 1),
+            "n_bins_evaluated": len(per_bin_growth),
+            "n_events_per_fold_avg": round(forecasts.size / k_folds, 1),
+        }
+
+    het_filt = _het_ceiling(filt_f, filt_r) if filt_f.size > 200 else None
+    het_raw  = _het_ceiling(raw_f, raw_r)   if raw_f.size  > 200 else None
+
+    # The homogeneous ceiling (single μ̄/σ̄) for comparison
+    if filt_r.size:
+        hom_filt_per_event = 0.5 * (filt_mean_pnl / filt_pnl_std) ** 2 if filt_pnl_std > 0 else 0.0
+        hom_filt_annual = hom_filt_per_event * filt_r.size
+        hom_filt_return_pct = (np.exp(hom_filt_annual) - 1.0) * 100.0
+    else:
+        hom_filt_per_event = hom_filt_annual = hom_filt_return_pct = float("nan")
+
+    # Now build the output dict with all the computed metrics.
+    out = {
+        "universe_symbols":   len(pool),
+        "years_of_data":      round(years, 3),
+        "raw_stage":          raw_summary,
+        "filtered_stage":     filt_summary,
+        "IR_ceiling":         round(ir_ceiling, 3),
+        "annualised_return_ceiling": round(ann_ret_ceiling, 3),
+        "current_actual_IR":  args.actual_ir,
+        "TC_current":         round(tc_current, 3),
+        "homogeneous_filtered_kelly": {
+            "per_event_log_growth": round(float(hom_filt_per_event), 6),
+            "annual_log_growth":    round(float(hom_filt_annual), 4),
+            "annual_return_pct":    round(float(hom_filt_return_pct), 1),
+        },
+        "heterogeneous_filtered_kelly": het_filt,
+        "heterogeneous_raw_kelly":      het_raw,
+        "diagnosis": {},
+    }
 
     # ---- Diagnosis -------------------------------------------------- #
     raw_ic = raw_summary["IC_oos_kfold"]
@@ -467,6 +568,21 @@ def main() -> int:
           f"(v2.2 cascade-test canonical)")
     print(f"  TC_current            : {tc_current:.3f}  "
           f"(1.0 = full alpha extraction)")
+    print()
+    print("  --- Kelly ceiling: homogeneous vs heterogeneous (Markowitz 1952; Cover-Thomas 1991) ---")
+    print(f"  Homogeneous (filtered):  G_year = {hom_filt_annual:.3f}  →  "
+          f"return ceil ≈ {hom_filt_return_pct:+.1f}%")
+    if het_filt and het_filt.get("status") == "ok":
+        het_g = het_filt["annual_log_growth_OOS"]
+        het_pct = het_filt["annual_return_ceiling_pct"]
+        print(f"  Heterogeneous (filt):    G_year = {het_g:.3f}  →  "
+              f"return ceil ≈ {het_pct:+.1f}%   "
+              f"(× {(het_g / max(hom_filt_annual, 1e-9)):.2f} vs homogeneous)")
+    if het_raw and het_raw.get("status") == "ok":
+        het_g_raw = het_raw["annual_log_growth_OOS"]
+        het_pct_raw = het_raw["annual_return_ceiling_pct"]
+        print(f"  Heterogeneous (raw):     G_year = {het_g_raw:.3f}  →  "
+              f"return ceil ≈ {het_pct_raw:+.1f}%")
     print()
     print("  --- Diagnosis ---")
     for k, v in diag.items():
