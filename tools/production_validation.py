@@ -177,6 +177,8 @@ def main() -> int:
     p.add_argument("--enable-kelly-calibrator", action="store_true",
                     help="enable the rolling per-bin OOS Kelly sizer "
                          "(Cover-Thomas 1991 §16; default off)")
+    p.add_argument("--params-json", type=str, default="{}",
+                    help="JSON dict of StrategyParams field overrides")
     args = p.parse_args()
 
     real_pool: dict | None = None
@@ -189,7 +191,18 @@ def main() -> int:
         print(f"Real-data universe: {len(real_pool)} symbols, "
               f"~{len(next(iter(real_pool.values())))} bars each")
 
-    base = StrategyParams(kelly_calibrator_enabled=bool(args.enable_kelly_calibrator))
+    # Build base params with CLI overrides applied as kwargs to the
+    # dataclass constructor (the only reliable way — post-hoc field
+    # patching doesn't update the auto-generated __init__).
+    overrides = json.loads(args.params_json) if args.params_json else {}
+    from dataclasses import fields as _dc_fields
+    valid_fields = {f.name for f in _dc_fields(StrategyParams)}
+    cleaned_over = {k: v for k, v in overrides.items() if k in valid_fields}
+    base = StrategyParams(
+        kelly_calibrator_enabled=bool(args.enable_kelly_calibrator),
+        **cleaned_over)
+    if overrides:
+        print(f"Param overrides applied: {cleaned_over}")
 
     # --- 1) Baseline canonical params -------------------------------- #
     base_verdict = _run_and_judge("Canonical (committed) StrategyParams",
