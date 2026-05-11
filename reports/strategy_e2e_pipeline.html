@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>AlphaPulse · E2E 매매 전략 파이프라인 (v3+A2 PROMOTABLE)</title>
+<style>
+  :root {
+    --bg: #fafbfc;
+    --fg: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+    --pass: #15803d;
+    --fail: #b91c1c;
+    --warn: #b45309;
+    --legacy: #6b7280;
+    --v2: #2563eb;
+    --v21: #7c3aed;
+    --v22: #0891b2;
+    --v3p1: #ea580c;
+    --v3p3: #c2410c;
+    --v3a2: #ca8a04;
+    --rejected: #6b7280;
+    --card-bg: #ffffff;
+    --code-bg: #f3f4f6;
+    --good-bg: #f0fdf4;
+    --bad-bg:  #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard",
+                 sans-serif;
+    background: var(--bg); color: var(--fg);
+    line-height: 1.6; margin: 0; padding: 28px 40px 80px;
+    max-width: 1320px; margin-left: auto; margin-right: auto;
+  }
+  h1 {
+    font-size: 28px; margin-bottom: 4px; letter-spacing: -0.01em;
+  }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  h2 { font-size: 22px; margin-top: 40px; border-bottom: 2px solid var(--border);
+       padding-bottom: 6px; }
+  h3 { font-size: 17px; margin-top: 28px; }
+  h4 { font-size: 14px; margin: 16px 0 6px; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.05em; }
+  p, ul, ol { font-size: 14.5px; }
+  ul, ol { padding-left: 22px; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px;
+         font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px;
+        font-size: 12.5px; overflow-x: auto;
+        font-family: ui-monospace, Menlo, Consolas, monospace; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px;
+          margin: 12px 0; background: var(--card-bg); border-radius: 6px;
+          overflow: hidden; }
+  th, td { padding: 8px 12px; border-bottom: 1px solid var(--border);
+           text-align: left; }
+  th { background: #f9fafb; font-weight: 600; color: var(--muted);
+       text-transform: uppercase; letter-spacing: 0.03em; font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  .summary-box {
+    background: var(--good-bg); border: 1px solid #86efac;
+    border-radius: 10px; padding: 16px 20px; margin: 0 0 28px;
+  }
+  .summary-box h3 { margin: 0 0 8px; color: var(--pass); font-size: 16px; }
+  .summary-box .row { display: flex; gap: 32px; font-size: 14px;
+                       flex-wrap: wrap; margin-top: 8px; }
+  .summary-box .metric { display: flex; flex-direction: column; }
+  .summary-box .metric .lbl { color: var(--muted); font-size: 11px;
+                                text-transform: uppercase; letter-spacing: 0.05em; }
+  .summary-box .metric .val { font-weight: 700; font-size: 18px;
+                                color: var(--fg); }
+  .layer-card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 8px; padding: 16px 20px; margin: 16px 0;
+  }
+  .layer-card.v2  { border-left-color: var(--v2); }
+  .layer-card.v21 { border-left-color: var(--v21); }
+  .layer-card.v22 { border-left-color: var(--v22); }
+  .layer-card.v3-p1 { border-left-color: var(--v3p1); }
+  .layer-card.v3-p3 { border-left-color: var(--v3p3); }
+  .layer-card.v3-a2 { border-left-color: var(--v3a2); }
+  .layer-card.rejected {
+    border-left-color: var(--rejected); background: #fafafa; opacity: 0.92;
+  }
+  .layer-card h3 { margin-top: 0; display: flex; align-items: center;
+                    gap: 10px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
+           font-size: 11px; font-weight: 600; color: white; vertical-align: middle;
+           letter-spacing: 0.02em; }
+  .b-pass { background: var(--pass); }
+  .b-fail { background: var(--fail); }
+  .b-warn { background: var(--warn); }
+  .b-v2  { background: var(--v2); }
+  .b-v21 { background: var(--v21); }
+  .b-v22 { background: var(--v22); }
+  .b-v3p1 { background: var(--v3p1); }
+  .b-v3p3 { background: var(--v3p3); }
+  .b-v3a2 { background: var(--v3a2); }
+  .b-rej { background: var(--rejected); }
+  .ref {
+    color: var(--muted); font-size: 12.5px; font-style: italic;
+    border-left: 2px solid var(--border); padding: 4px 0 4px 12px;
+    margin: 6px 0;
+  }
+  .improvement {
+    background: #fef3c7; border-left: 3px solid var(--warn);
+    padding: 8px 14px; margin: 8px 0; font-size: 13.5px;
+    border-radius: 0 6px 6px 0;
+  }
+  .improvement strong { color: var(--warn); }
+  .synergy {
+    background: #ede9fe; border-left: 3px solid #7c3aed;
+    padding: 8px 14px; margin: 8px 0; font-size: 13.5px;
+    border-radius: 0 6px 6px 0;
+  }
+  .synergy strong { color: #6d28d9; }
+  .pipeline-wrap { background: var(--card-bg); border: 1px solid var(--border);
+                    border-radius: 10px; padding: 12px;
+                    overflow-x: auto; }
+  svg.pipeline { display: block; min-width: 1280px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 12.5px;
+            margin: 8px 12px 4px; color: var(--muted); }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot { width: 11px; height: 11px; border-radius: 50%;
+                display: inline-block; }
+  .formula {
+    background: #fdf6e3; border: 1px solid #fbbf24;
+    padding: 10px 14px; border-radius: 6px; font-size: 13px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; margin: 8px 0;
+    white-space: pre-wrap;
+  }
+  .check { font-size: 14px; }
+  .check.pass::before { content: "✅ "; }
+  .check.fail::before { content: "❌ "; }
+  .check.warn::before { content: "⚠️ "; }
+</style>
+</head>
+<body>
+
+<h1>AlphaPulse · E2E 매매 전략 파이프라인</h1>
+<div class="subtitle">
+  현재 PROMOTABLE state: <code>v3+A2</code>  |  실데이터 OOS 검증 완료 (Binance USDT-Perp 313심볼 × 1년)  |  생성: <code>reports/strategy_e2e_pipeline.html</code>
+</div>
+
+<div class="summary-box">
+  <h3>v3+A2 캐노니컬 OOS 검증 결과 — ALL 5 게이트 PASS + 6/6 robustness PASS</h3>
+  <div class="row">
+    <div class="metric"><span class="lbl">trade count / yr</span><span class="val">302</span></div>
+    <div class="metric"><span class="lbl">median Sharpe</span><span class="val">+3.78</span></div>
+    <div class="metric"><span class="lbl">P95 MDD</span><span class="val">−3.8%</span></div>
+    <div class="metric"><span class="lbl">Sortino</span><span class="val">+3.93</span></div>
+    <div class="metric"><span class="lbl">win rate</span><span class="val">43.7%</span></div>
+    <div class="metric"><span class="lbl">annual return</span><span class="val">+7.9%</span></div>
+    <div class="metric"><span class="lbl">±20% perturbation</span><span class="val">6 / 6 PASS</span></div>
+    <div class="metric"><span class="lbl">최종 verdict</span><span class="val" style="color: var(--pass);">✅ PROMOTE</span></div>
+  </div>
+  <p style="font-size: 12.5px; color: var(--muted); margin: 12px 0 0;">
+    동일 universe Buy-and-Hold <strong>−62.6%</strong>, Naive momentum <strong>−17.7%</strong> 대비 <strong>+7.9%</strong>.
+    학술 정합 heterogeneous-Kelly 천장 +83,779%/yr 중 현재 추출 0.01% (TC=0.71, 1× leverage 분)
+  </p>
+</div>
+
+<!-- ───────── SVG E2E pipeline diagram ───────── -->
+<h2>1. E2E 파이프라인 가시화</h2>
+
+<div class="legend">
+  <span class="legend-item"><span class="legend-dot" style="background: var(--v2)"></span>v2 (TSM + volume)</span>
+  <span class="legend-item"><span class="legend-dot" style="background: var(--v21)"></span>v2.1 (multi-horizon TSM 다수결)</span>
+  <span class="legend-item"><span class="legend-dot" style="background: var(--v22)"></span>v2.2 (cascade-test 진입)</span>
+  <span class="legend-item"><span class="legend-dot" style="background: var(--v3p1)"></span>v3 P1 (Hawkes-decay chandelier)</span>
+  <span class="legend-item"><span class="legend-dot" style="background: var(--v3p3)"></span>v3 P3 (Faber pyramiding)</span>
+  <span class="legend-item"><span class="legend-dot" style="background: var(--v3a2)"></span>v3 A2 (cross-asset Hawkes)</span>
+  <span class="legend-item"><span class="legend-dot" style="background: var(--rejected)"></span>REJECTED (코드 보존)</span>
+</div>
+
+<div class="pipeline-wrap">
+<svg class="pipeline" viewBox="0 0 1280 760" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3"
+             orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#374151" />
+    </marker>
+    <marker id="arrowRej" markerWidth="10" markerHeight="10" refX="9" refY="3"
+             orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#9ca3af" />
+    </marker>
+    <marker id="arrowAccent" markerWidth="10" markerHeight="10" refX="9" refY="3"
+             orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#7c3aed" />
+    </marker>
+  </defs>
+
+  <!-- Data layer -->
+  <g>
+    <rect x="20" y="40" width="180" height="80" rx="8"
+          fill="#f0f9ff" stroke="#0284c7" stroke-width="1.5" />
+    <text x="110" y="62" text-anchor="middle" font-size="13" font-weight="700" fill="#0c4a6e">
+      Data Layer
+    </text>
+    <text x="110" y="80" text-anchor="middle" font-size="11" fill="#0c4a6e">
+      Binance USD-M Futures
+    </text>
+    <text x="110" y="95" text-anchor="middle" font-size="11" fill="#0c4a6e">
+      1h klines · 313 symbols × 1y
+    </text>
+    <text x="110" y="110" text-anchor="middle" font-size="11" fill="#0c4a6e">
+      $5M/day quote vol floor
+    </text>
+  </g>
+
+  <!-- Screener layer (multi-gate) -->
+  <g>
+    <rect x="240" y="20" width="240" height="170" rx="8"
+          fill="#fefce8" stroke="#ca8a04" stroke-width="1.5" />
+    <text x="360" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#713f12">
+      Screener  ·  Stage 1 Triage
+    </text>
+    <line x1="260" y1="48" x2="460" y2="48" stroke="#ca8a04" stroke-width="0.7" />
+    <text x="360" y="64" text-anchor="middle" font-size="11" fill="#713f12">
+      Lee-Mykland L_t  (Gumbel α=0.01)
+    </text>
+    <text x="360" y="78" text-anchor="middle" font-size="11" fill="#713f12">
+      Bipower-variation jump test
+    </text>
+    <text x="360" y="95" text-anchor="middle" font-size="11" fill="#713f12">
+      multi_horizon_alignment ≥ 2/3
+    </text>
+    <text x="360" y="109" text-anchor="middle" font-size="11" fill="#713f12">
+      Hurst-DFA ≥ 0.55 (persistence)
+    </text>
+    <text x="360" y="123" text-anchor="middle" font-size="11" fill="#713f12">
+      Vol-regime ≤ 3× BV/median
+    </text>
+    <text x="360" y="137" text-anchor="middle" font-size="11" fill="#713f12">
+      Funding pressure asymmetry
+    </text>
+    <text x="360" y="158" text-anchor="middle" font-size="10.5" fill="#92400e" font-style="italic">
+      top_n=10 by composite rank
+    </text>
+    <text x="360" y="175" text-anchor="middle" font-size="10.5" fill="#92400e" font-style="italic">
+      → 6,800 raw / 4,675 filt events/yr
+    </text>
+  </g>
+
+  <!-- Strategy filters (v2 + v2.1) -->
+  <g>
+    <rect x="520" y="20" width="240" height="170" rx="8"
+          fill="#f3e8ff" stroke="#7c3aed" stroke-width="1.5" />
+    <text x="640" y="40" text-anchor="middle" font-size="13" font-weight="700" fill="#5b21b6">
+      Strategy Filters
+    </text>
+    <line x1="540" y1="48" x2="740" y2="48" stroke="#7c3aed" stroke-width="0.7" />
+    <text x="640" y="65" text-anchor="middle" font-size="11" fill="#5b21b6">
+      <tspan font-weight="700" fill="#7c3aed">v2.1</tspan>  multi-horizon TSM 다수결
+    </text>
+    <text x="640" y="79" text-anchor="middle" font-size="10.5" fill="#5b21b6">
+      7d / 14d / 30d  ≥ 2/3 동의
+    </text>
+    <text x="640" y="93" text-anchor="middle" font-size="10.5" fill="#5b21b6" font-style="italic">
+      Han-Zhou-Zhu 2016 JFE / AMP 2013
+    </text>
+    <line x1="560" y1="103" x2="720" y2="103" stroke="#7c3aed" stroke-width="0.4" stroke-dasharray="3,2" />
+    <text x="640" y="120" text-anchor="middle" font-size="11" fill="#5b21b6">
+      <tspan font-weight="700" fill="#2563eb">v2</tspan>  volume z-score ≥ 0.5
+    </text>
+    <text x="640" y="134" text-anchor="middle" font-size="10.5" fill="#5b21b6">
+      Easley-LdP-O'Hara 2012 informativeness
+    </text>
+    <line x1="560" y1="144" x2="720" y2="144" stroke="#7c3aed" stroke-width="0.4" stroke-dasharray="3,2" />
+    <text x="640" y="161" text-anchor="middle" font-size="11" fill="#5b21b6">
+      <tspan font-weight="700" fill="#0891b2">v2.2</tspan> cascade-test 진입 gate
+    </text>
+    <text x="640" y="175" text-anchor="middle" font-size="10.5" fill="#5b21b6">
+      close[t] &gt; anchor (직전 close) — Aronson 2007
+    </text>
+  </g>
+
+  <!-- A2 leader-anchor (side branch above) -->
+  <g>
+    <rect x="800" y="0" width="200" height="80" rx="8"
+          fill="#fef3c7" stroke="#ca8a04" stroke-width="1.5" stroke-dasharray="5,3" />
+    <text x="900" y="22" text-anchor="middle" font-size="12.5" font-weight="700" fill="#92400e">
+      v3 A2 · Cross-Asset Hawkes
+    </text>
+    <text x="900" y="40" text-anchor="middle" font-size="10.5" fill="#92400e">
+      BTC/ETH leader-jump 24h 안
+    </text>
+    <text x="900" y="54" text-anchor="middle" font-size="10.5" fill="#92400e">
+      → |L| × 1.20 boost (conf² × 1.44)
+    </text>
+    <text x="900" y="70" text-anchor="middle" font-size="10" fill="#92400e" font-style="italic">
+      Aït-Sahalia-CD-Laeven 2014 §3
+    </text>
+  </g>
+
+  <!-- Sizing -->
+  <g>
+    <rect x="800" y="100" width="200" height="90" rx="8"
+          fill="#ecfdf5" stroke="#059669" stroke-width="1.5" />
+    <text x="900" y="120" text-anchor="middle" font-size="13" font-weight="700" fill="#065f46">
+      Sizing (analytical)
+    </text>
+    <line x1="820" y1="127" x2="980" y2="127" stroke="#059669" stroke-width="0.6" />
+    <text x="900" y="142" text-anchor="middle" font-size="10.5" fill="#065f46">
+      base = risk_per_trade / stop_pct
+    </text>
+    <text x="900" y="156" text-anchor="middle" font-size="10.5" fill="#065f46">
+      amp = confidence²  (k=2 quadratic)
+    </text>
+    <text x="900" y="170" text-anchor="middle" font-size="10.5" fill="#065f46">
+      cvar floor · sizing_cap · safe leverage
+    </text>
+    <text x="900" y="184" text-anchor="middle" font-size="10" fill="#065f46" font-style="italic">
+      Cvitanić-Kim 2024 §3.2 / MTZ 2011
+    </text>
+  </g>
+
+  <!-- Execution / position management -->
+  <g>
+    <rect x="1040" y="40" width="220" height="180" rx="8"
+          fill="#fff7ed" stroke="#ea580c" stroke-width="1.5" />
+    <text x="1150" y="60" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">
+      Execution + Position Mgmt
+    </text>
+    <line x1="1060" y1="68" x2="1240" y2="68" stroke="#ea580c" stroke-width="0.6" />
+    <text x="1150" y="86" text-anchor="middle" font-size="11" fill="#7c2d12">
+      <tspan font-weight="700" fill="#ea580c">v3 P1</tspan> adaptive chandelier
+    </text>
+    <text x="1150" y="100" text-anchor="middle" font-size="10.5" fill="#7c2d12">
+      mult × (1 + 0.6·exp(−t/τ)),  τ = 48h
+    </text>
+    <text x="1150" y="114" text-anchor="middle" font-size="10" fill="#7c2d12" font-style="italic">
+      Aït-Sahalia-CD-Laeven 2014 Hawkes decay
+    </text>
+    <line x1="1060" y1="124" x2="1240" y2="124" stroke="#ea580c" stroke-width="0.3" stroke-dasharray="3,2" />
+    <text x="1150" y="140" text-anchor="middle" font-size="11" fill="#7c2d12">
+      <tspan font-weight="700" fill="#c2410c">v3 P3</tspan> Faber pyramiding
+    </text>
+    <text x="1150" y="154" text-anchor="middle" font-size="10.5" fill="#7c2d12">
+      max 3 legs · in-profit only · risk/N
+    </text>
+    <text x="1150" y="168" text-anchor="middle" font-size="10" fill="#7c2d12" font-style="italic">
+      Faber 2007 §IV · MTZ 2011 §3 partial Kelly
+    </text>
+    <line x1="1060" y1="178" x2="1240" y2="178" stroke="#ea580c" stroke-width="0.3" stroke-dasharray="3,2" />
+    <text x="1150" y="194" text-anchor="middle" font-size="11" fill="#7c2d12">
+      time-stop 48 bars  ·  CVaR breach
+    </text>
+    <text x="1150" y="208" text-anchor="middle" font-size="10.5" fill="#7c2d12">
+      taker fee 6bp · slippage 1bp
+    </text>
+  </g>
+
+  <!-- OOS adaptive layer (centre below) -->
+  <g>
+    <rect x="380" y="280" width="500" height="140" rx="8"
+          fill="#fef2f2" stroke="#b91c1c" stroke-width="1.5" />
+    <text x="630" y="300" text-anchor="middle" font-size="13" font-weight="700" fill="#7f1d1d">
+      OOS 자동 보정 (재보정 ↔ HALT 안전장치)
+    </text>
+    <line x1="400" y1="307" x2="860" y2="307" stroke="#b91c1c" stroke-width="0.6" />
+    <text x="630" y="325" text-anchor="middle" font-size="11" fill="#7f1d1d">
+      Probabilistic Sharpe Ratio (Bailey-LdP 2012) · SR · DSR (Bailey-LdP 2014)
+    </text>
+    <text x="630" y="341" text-anchor="middle" font-size="11" fill="#7f1d1d">
+      PSR &lt; 0.55 → 3-attempt recalibration of indicator params
+    </text>
+    <text x="630" y="357" text-anchor="middle" font-size="11" fill="#7f1d1d">
+      All attempts fail → HALT: 모든 포지션 강제 청산 + 신규 진입 차단
+    </text>
+    <text x="630" y="375" text-anchor="middle" font-size="10.5" fill="#7f1d1d" font-style="italic">
+      warmup 5 cycles · MIN_SAMPLES=50 · live/backtest parity invariant
+    </text>
+    <text x="630" y="395" text-anchor="middle" font-size="10.5" fill="#7f1d1d">
+      <tspan font-weight="700">절대 금지:</tspan> PSR/MDD 게이트 자체 완화 — 자본 보호 의도와 정면 충돌
+    </text>
+  </g>
+
+  <!-- Universal Kelly Calibrator (REJECTED, dashed) -->
+  <g>
+    <rect x="1020" y="280" width="240" height="160" rx="8"
+          fill="#f9fafb" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="6,4" />
+    <text x="1140" y="300" text-anchor="middle" font-size="12.5" font-weight="700" fill="#374151">
+      Kelly Calibrator  <tspan font-size="10" fill="#b91c1c">REJECTED</tspan>
+    </text>
+    <text x="1140" y="316" text-anchor="middle" font-size="10" fill="#6b7280" font-style="italic">
+      (코드 보존 · default OFF)
+    </text>
+    <line x1="1040" y1="324" x2="1240" y2="324" stroke="#6b7280" stroke-width="0.4" stroke-dasharray="3,2" />
+    <text x="1140" y="342" text-anchor="middle" font-size="10.5" fill="#374151">
+      Rolling 300-trade per-bin Kelly
+    </text>
+    <text x="1140" y="356" text-anchor="middle" font-size="10.5" fill="#374151">
+      f_b = μ_b / σ_b²  (Cover-Thomas 1991)
+    </text>
+    <text x="1140" y="370" text-anchor="middle" font-size="10.5" fill="#374151">
+      Quarter-Kelly α=0.25 · OOS-purged
+    </text>
+    <text x="1140" y="392" text-anchor="middle" font-size="10" fill="#b91c1c">
+      α=0.25: ret +27.3% / MDD -22.8% (FAIL)
+    </text>
+    <text x="1140" y="406" text-anchor="middle" font-size="10" fill="#b91c1c">
+      -20% MDD 게이트 2.8pp 초과
+    </text>
+    <text x="1140" y="425" text-anchor="middle" font-size="10" fill="#6b7280" font-style="italic">
+      Future risk-budget 완화 시 즉시 활용 가능
+    </text>
+  </g>
+
+  <!-- Arrows: data → screener → strategy → sizing → execution -->
+  <line x1="200" y1="80" x2="240" y2="100" stroke="#374151" stroke-width="2"
+         marker-end="url(#arrow)" />
+  <line x1="480" y1="100" x2="520" y2="100" stroke="#374151" stroke-width="2"
+         marker-end="url(#arrow)" />
+  <line x1="760" y1="100" x2="800" y2="140" stroke="#374151" stroke-width="2"
+         marker-end="url(#arrow)" />
+  <line x1="1000" y1="140" x2="1040" y2="120" stroke="#374151" stroke-width="2"
+         marker-end="url(#arrow)" />
+
+  <!-- A2 boost arrow into sizing -->
+  <line x1="900" y1="80" x2="900" y2="100" stroke="#ca8a04" stroke-width="1.5"
+         stroke-dasharray="5,3" marker-end="url(#arrow)" />
+
+  <!-- OOS feedback loop arrows -->
+  <path d="M 1150 220 Q 1150 260 880 320" stroke="#b91c1c" stroke-width="1.6"
+         fill="none" marker-end="url(#arrow)" />
+  <path d="M 380 350 Q 200 350 200 240 Q 200 200 240 190" stroke="#b91c1c"
+         stroke-width="1.6" fill="none" marker-end="url(#arrow)" stroke-dasharray="5,3" />
+  <text x="200" y="265" text-anchor="middle" font-size="10" fill="#b91c1c"
+        font-style="italic">PSR&lt;0.55 →</text>
+  <text x="200" y="277" text-anchor="middle" font-size="10" fill="#b91c1c"
+        font-style="italic">recalibrate</text>
+
+  <!-- Calibrator dashed arrow (would-feed-back-to-sizing if enabled) -->
+  <path d="M 1020 320 Q 980 280 900 200" stroke="#6b7280" stroke-width="1.2"
+         fill="none" marker-end="url(#arrowRej)" stroke-dasharray="4,3" />
+  <text x="975" y="265" text-anchor="middle" font-size="10" fill="#6b7280"
+        font-style="italic">(OFF)</text>
+
+  <!-- Performance + ceiling labels at bottom -->
+  <g>
+    <rect x="20" y="500" width="1240" height="220" rx="10"
+          fill="#ffffff" stroke="#e5e7eb" stroke-width="1" />
+    <text x="40" y="528" font-size="14" font-weight="700" fill="#1f2937">
+      OOS 측정된 정보 한계 (Grinold Fundamental Law + Heterogeneous Kelly)
+    </text>
+    <line x1="40" y1="535" x2="1240" y2="535" stroke="#e5e7eb" stroke-width="0.6" />
+
+    <!-- Ceiling row -->
+    <text x="60" y="558" font-size="12" font-weight="700" fill="#374151">IC (5-fold OOS)</text>
+    <text x="220" y="558" font-size="12" fill="#374151">raw screener: −0.130  ·  post-filter: −0.086  (둘 다 음수: 점프는 평균 회귀 — Lo-MacKinlay 1990)</text>
+
+    <text x="60" y="582" font-size="12" font-weight="700" fill="#374151">BR / yr</text>
+    <text x="220" y="582" font-size="12" fill="#374151">raw 6,800 / post-filter 4,675 (cluster-deduped, AS-CD-L 2014 τ=48h)</text>
+
+    <text x="60" y="606" font-size="12" font-weight="700" fill="#374151">Homogeneous Kelly ceiling</text>
+    <text x="220" y="606" font-size="12" fill="#374151">+588% / yr  (Grinold: N · 0.5 · (μ̄/σ̄)²)</text>
+
+    <text x="60" y="630" font-size="12" font-weight="700" fill="#ca8a04">Heterogeneous Kelly ceiling</text>
+    <text x="220" y="630" font-size="12" fill="#7f1d1d" font-weight="700">+83,779% / yr  (Markowitz 1952 / Cover-Thomas 1991: Σ_b n_b · 0.5 · (μ_b/σ_b)²)</text>
+
+    <text x="60" y="654" font-size="12" font-weight="700" fill="#15803d">Current achieved (v3+A2)</text>
+    <text x="220" y="654" font-size="12" fill="#15803d">+7.9% / yr — TC ≈ 0.71 of homogeneous IR (Conviction-Power Kelly k=2)</text>
+
+    <text x="60" y="680" font-size="12" font-weight="700" fill="#1f2937">Calibrator empirical (REJECTED)</text>
+    <text x="220" y="680" font-size="12" fill="#1f2937">+27.3% / yr (Quarter-Kelly) — 3.4× lift 측정됐으나 MDD -22.8% &gt; -20% 게이트</text>
+
+    <text x="40" y="710" font-size="11" fill="#6b7280" font-style="italic">
+      알파의 진정한 원천: 시그널 검출이 아니라 ① 비대칭 chandelier 청산 (skew +4.6) ② Conviction-Power Kelly 비선형 사이즈 ③ Hawkes 클러스터 anticipatory entry
+    </text>
+  </g>
+</svg>
+</div>
+
+<!-- ───────── Component descriptions ───────── -->
+<h2>2. 구성 요소별 상세 설명</h2>
+
+<div class="layer-card v2">
+<h3>📥 Data Layer · Binance USDT-Perp 1h klines <span class="badge b-pass">PROD</span></h3>
+<p>실거래 환경과 동일한 universe — 라이브 스크리너의 <code>$5M / day quote-volume floor</code> 를 통과하는 313 심볼 (697 후보 중 라이브-mirror 필터 통과). 1년치 시간봉 OHLCV 가 <code>data/cache/*_1h.parquet</code> 로 캐시되어 OOS 검증과 라이브 실행이 같은 데이터를 본다.</p>
+<h4>기능</h4>
+<ul>
+  <li><code>tools/fetch_binance_real.py</code>: data.binance.vision S3 미러에서 자동 다운로드 → parquet 캐시</li>
+  <li><code>data_loader.real_universe()</code>: live-screener 의 quote-volume 필터를 그대로 적용해 cross-section을 라이브와 동일하게 보존</li>
+</ul>
+<div class="ref">학술 근거: 라이브 스크리너 floor 와 1:1 mirror — Bailey-Lopez de Prado (2014) "Backtest Overfitting" §3 OOS 데이터-실행 parity 원칙.</div>
+<div class="improvement"><strong>모니터링 포인트:</strong> 현재 데이터는 2024-05 ~ 2025-04 (1년). 다른 regime 의 OOS 일반화 검증을 위해 추가 1년 (2023-05~2024-04) 다운로드 가능. 단, 학술 정합 변경이 아닌 *데이터 추가* — strategy 코드 동일.</div>
+</div>
+
+<div class="layer-card v2">
+<h3>🔬 Screener Stage 1 — Triage <span class="badge b-pass">PROD</span></h3>
+<p>잠재 picks 의 *통계적 신뢰성* 을 우주 단위에서 검증하는 단계. 6중 필터를 통과해야 cycle 의 top_n=10 후보에 진입.</p>
+<h4>구성 게이트 (모두 동시 만족)</h4>
+<ol>
+  <li><strong>Lee-Mykland L<sub>t</sub> 점프 검정</strong> (Lee-Mykland 2008 JoF 21(6)): bipower-variation 으로 점프-강건 변동성 추정 → 잠재 점프 바에서 L<sub>t</sub> ≫ N(0,1). Gumbel-corrected α=0.01 임계값 ≈ 3.89 — universe-wide multiple-testing 보정으로 false-discovery rate 제어.</li>
+  <li><strong>multi_horizon_alignment ≥ 2/3</strong>: 점프 방향과 (1h, 4h, 24h) cumulative return 부호 ≥ 2 일치. 단일-바 노이즈 spike 거부.</li>
+  <li><strong>Hurst-DFA ≥ 0.55</strong> (Peng et al. 1994): persistence (지속성) 지표. 무작위 행보가 아닌 추세 가능성 검증.</li>
+  <li><strong>Vol-regime score ≤ 3×</strong>: 최근 BV / 장기 BV 비. 폭발 직전 candidate gentle penalty.</li>
+  <li><strong>Liquidity floor</strong>: quote_volume ≥ \$5M (live mirror).</li>
+  <li><strong>Funding pressure asymmetry</strong>: funding 을 강제로 지불하는 쪽 거부 (long-pay → short, short-pay → long).</li>
+</ol>
+<h4>출력</h4>
+<p>6,800 raw events / yr (313심볼 × 1년) → 4,675 events 가 다음 단계의 strategy filter 까지 통과.</p>
+<div class="ref">학술 근거: Lee-Mykland (2008); Barndorff-Nielsen-Shephard (2004) bipower variation; Peng et al. (1994) DFA.</div>
+<div class="synergy"><strong>시너지:</strong> 6개 게이트가 *독립* 통계적 가설을 검증 (multiple-testing Bonferroni-corrected). 통과 시 picks 는 *통계적으로 강함 + 추세적으로 일관 + 지속성 있음* 의 교집합 — false-positive 가 cycle-level 에서 매우 낮음.</div>
+<div class="improvement"><strong>개선 후보 (학술 정합)</strong>: z_alpha 와 min_horizons_agree 의 조정은 *직접 시도해서 reject 됨* (v2.3 — overfit). top_n=10 의 확대도 학술 정당화 부족. <strong>이 layer 는 현 시점 최적</strong>.</div>
+</div>
+
+<div class="layer-card v21">
+<h3>🌊 Strategy Filter A — Multi-Horizon TSM 다수결 <span class="badge b-v21">v2.1</span> <span class="badge b-pass">PROD</span></h3>
+<p>점프 *방향* 이 macro-trend 와 정합하는지 검증. 단일 윈도 (MOP 2012 30d) 가 한 윈도 내 mean-reversion 으로 long entry 를 모두 차단하는 문제를 *다중-horizon 다수결* 로 보정.</p>
+<div class="formula">macro_trend_majority(rets, side, lookbacks=(168, 336, 720), min_agree=2)
+   = sum(sign(cum_ret[lb]) == side  for lb in lookbacks) ≥ 2</div>
+<p>7d / 14d / 30d 세 윈도가 ≥ 2/3 동의 시에만 진입. H<sub>0</sub> (drift=0) 하 각 horizon 의 부호는 근사 Bernoulli(0.5), 약상관 → ≥ 2/3 majority 의 Type-I rate ≤ 단일 horizon (Owen 2007 bound). H<sub>1</sub> (drift &gt; 0) 하 ≥ 2/3 동의 확률 &gt; 어떤 단일 horizon — 같은 size 에서 더 높은 검정력.</p>
+<div class="ref">학술 근거: Moskowitz-Ooi-Pedersen (2012) JFE 104(2); Asness-Moskowitz-Pedersen (2013) JF 68(3) §III.B Combined Momentum; Han-Zhou-Zhu (2016) JFE 119(3) "Taming Momentum Crashes"; Owen (2007) Bonferroni-type bound.</div>
+<div class="synergy"><strong>시너지:</strong> 스크리너의 multi_horizon_alignment 가 *intraday* 일치 (1h/4h/24h) 를 보고, 전략 단의 macro_trend_majority 가 *macro* 일치 (7d/14d/30d) 를 봄. 시간 척도가 분리돼 redundancy 가 아닌 *cascade* — Aronson 2007 §IV.</div>
+<div class="improvement"><strong>모니터링 포인트:</strong> ±20% perturbation (tsm_lookback 480 / 960) 모두 PASS 확인됨. lookback 튜닝은 overfit 위험이므로 *변경 금지*.</div>
+</div>
+
+<div class="layer-card v2">
+<h3>📊 Strategy Filter B — Volume z-score <span class="badge b-v2">v2</span> <span class="badge b-pass">PROD</span></h3>
+<p>점프 바의 *정보량* 검증. 이상 거래량이 동반된 점프는 *정보 도래* (informed flow); 평이한 거래량의 점프는 *노이즈*.</p>
+<div class="formula">vol_z_at(volume, t, window=24, threshold=0.5)
+   = (volume[t] - μ_24bar) / σ_24bar ≥ 0.5</div>
+<div class="ref">학술 근거: Easley-López de Prado-O'Hara (2012) RFS 25(5) "Flow toxicity and liquidity"; Barclay-Warner (1993) JFE 34(3) "Stealth Trading".</div>
+<div class="synergy"><strong>시너지:</strong> TSM 이 *방향* 을 검증하면 volume 은 *원인* 을 검증. 두 dimension 이 직교적이며 동시 통과 시 picks 의 informativeness 가 곱셈으로 누적.</div>
+</div>
+
+<div class="layer-card v22">
+<h3>🎯 Entry Trigger — Cascade-test Continuation <span class="badge b-v22">v2.2</span> <span class="badge b-pass">PROD</span></h3>
+<p>스크리너가 통계적으로 검증한 점프에 대해, 전략은 *재검정*이 아닌 *지속(continuation)* 만 확인. v2.1 까지 사용한 Donchian-N(20) breakout 게이트는 LM 검정을 *두 번* 적용하는 redundancy 였고, valid 한 picks 의 ≈ 97% 를 죽이고 있었음.</p>
+<div class="formula">active_picks[sym] = (side, expiry, anchor, scale)
+   anchor = close[pre_pick_bar]
+trig_long = close[t] > anchor          ← Donchian 대신
+fired_long = (want=="long" and trig_long and tsm_majority and vol_z_ok)</div>
+<p>jump 바 t 에서 close[t] &gt; close[t-1] (점프 정의 자체) → 즉시 fire. 이후 t' 에서는 close[t'] &gt; anchor 만족 시 fire — Hawkes 클러스터가 식지 않았다는 *positivity 의 지속* 만 확인.</p>
+<div class="ref">학술 근거: Aronson (2007) <em>Evidence-Based Technical Analysis</em> §IV cascade tests theory; Aït-Sahalia &amp; Jacod (2009) JoE 152(2) §3 — LM-type 검정이 breakout 휴리스틱을 점근적으로 dominate; Aït-Sahalia-Cacho-Diaz-Laeven (2014) JFE 117(3) Hawkes cluster decay τ ≈ 1/β.</div>
+<div class="synergy"><strong>시너지:</strong> 이 single 변경이 v2.1 의 132 trades/yr → 332 trades/yr (+150%) 으로 *시그널 품질 손상 없이* breadth utilisation 개선. picks → trades 변환률을 fundamentally 끌어올림.</div>
+<div class="improvement"><strong>모니터링 포인트:</strong> pick_ttl 24h → 48h 확장 (AS-CD-L 2014 cluster timescale 의 학술 추정). 추가 확장은 stale-pick 위험.</div>
+</div>
+
+<div class="layer-card v3-p1">
+<h3>🕯️ Exit · Hawkes-Decay Adaptive Chandelier <span class="badge b-v3p1">v3 P1</span> <span class="badge b-pass">PROD</span></h3>
+<p>고정 3·ATR chandelier 는 Hawkes 클러스터의 phase 를 무시. 클러스터 활성 초기엔 *넓은* chandelier 로 cluster-internal pullback 흡수, 클러스터 종료 임박엔 *tight* chandelier 로 mean-reversion 전 이익 잠금.</p>
+<div class="formula">adaptive_mult(t_in_pos)
+   = base_mult × (1 + width_boost × exp(−t_in_pos / τ))
+   τ = 48h (= pick_ttl, Hawkes 1/β)
+   width_boost = 0.6
+
+   t=0 (entry):  adapt = 3.0 × 1.60 = 4.80 · ATR  (wide)
+   t=τ:          adapt = 3.0 × 1.22 ≈ 3.66 · ATR
+   t≫τ:          adapt → 3.0 · ATR              (legacy)</div>
+<div class="ref">학술 근거: Aït-Sahalia-Cacho-Diaz-Laeven (2014) JFE 117(3) §2 Hawkes 자기자극 강도 λ(t)=λ₀+α·Σexp(−β(t-tᵢ)); Bandy (2014) <em>Mean Reversion Trading Systems</em> §5 vol-adapted Chandelier; Lo-MacKinlay (1990) short-horizon overreaction.</div>
+<div class="synergy"><strong>시너지:</strong> upper_bound_diagnostic 가 입증한 핵심 사실 (alpha 는 점프 검출이 아닌 *비대칭 청산* 에서 발생 — skew +4.6) 을 직접 활용. 클러스터 시간 구조를 청산에 반영해 right-tail 을 더 잡음.</div>
+<div class="improvement"><strong>모니터링 포인트:</strong> width_boost=0.6 / τ=48h 는 학술 근거 (AS-CD-L 2014 cluster decay timescale) 에서 직접 유래. 데이터 튜닝 아님.</div>
+</div>
+
+<div class="layer-card v3-p3">
+<h3>🏗️ Position Mgmt · Faber Pyramiding within Cluster <span class="badge b-v3p3">v3 P3</span> <span class="badge b-pass">PROD</span></h3>
+<p>활성 포지션 중 *같은 방향* 의 새 스크리너 picks 가 도착하고 기존 포지션이 *양수 PnL* 이면 추가 leg 진입. Faber 의 trend-following 정통: "winners only scale in, never losers".</p>
+<h4>진입 조건 (모두 만족)</h4>
+<ol>
+  <li>기존 모든 legs 가 새 픽과 같은 방향</li>
+  <li>aggregate unrealised PnL &gt; 0 (Faber rule)</li>
+  <li>legs 수 &lt; max_pyramid_legs (= 3)</li>
+  <li>총 노출 + 추가 size ≤ sizing_cap</li>
+  <li>당 bar 에 fresh screener pulse, 아직 소비 안 됨</li>
+</ol>
+<p>각 leg 의 size = (risk_per_trade / max_pyramid_legs) × amp — *aggregate cluster risk 가 single-leg risk 와 동일* 하게 partial Kelly 정합.</p>
+<div class="ref">학술 근거: Faber (2007) <em>A Quantitative Approach to Tactical Asset Allocation</em> §IV winner-only pyramiding; MacLean-Thorp-Ziemba (2011) <em>Kelly Capital Growth Investment Criterion</em> §3 partial Kelly under joint risk.</div>
+<div class="synergy"><strong>시너지:</strong> Hawkes cluster 가 active 한 동안 (~48h) 같은 방향 picks 가 클러스터의 연속 점프 — 누적 노출이 합리적. P1 의 wide-early chandelier 가 multi-leg 의 cluster-internal 변동성 흡수.</div>
+<div class="improvement"><strong>모니터링 포인트:</strong> max_pyramid_legs=3 은 Faber 의 classical 1/3-each pyramid 정합. 학술 정당화 없이 증가 금지.</div>
+</div>
+
+<div class="layer-card v3-a2">
+<h3>⚡ Cross-Asset Hawkes Leader-Follower Boost <span class="badge b-v3a2">v3 A2</span> <span class="badge b-pass">PROD</span></h3>
+<p>BTC / ETH 같은 방향 점프가 leader_anchor_decay_bars (=24h) 안에 발생하면 follower 픽의 conviction 부스트. Aït-Sahalia 2014 의 mutually-exciting Hawkes 의 직접 구현.</p>
+<div class="formula">λ_B(t) = λ₀_B + α_BB · Σ exp(−β(t−tᵢ_B)) + α_BA · Σ exp(−β(t−tᵢ_A))
+   ─────────────────────────  ────────────────────────  ──────────────────────────
+        constant              self-excitation         cross-excitation (A=BTC/ETH)
+
+if leader_jump_within_24h(side):
+    lm_signed *= leader_anchor_boost (= 1.20)
+    → sized × 1.44  (since amp ∝ conf²)</div>
+<p>upper_bound_analysis 가 측정: 1h follower events 의 14% 가 leader-anchored, 그 부분집합의 mean PnL = +2.6% (vs 비조건부 +0.1%, **26× 향상**).</p>
+<div class="ref">학술 근거: Aït-Sahalia-Cacho-Diaz-Laeven (2014) JFE 117(3) §3 mutually-exciting Hawkes — α_AB 가 cross-excitation 강도, 동 §4-5에서 글로벌 자산군 contagion 실증.</div>
+<div class="synergy"><strong>시너지:</strong> v3 의 단일 single change 로 v2.2 의 cascade-test entry 기반에 *방향-검증된* 추가 lift 만 결합. Heterogeneous Kelly ceiling 의 14% 가 leader-anchored 라는 데이터를 직접 활용.</div>
+<div class="improvement"><strong>모니터링 포인트:</strong> τ=24h 는 AS-CD-L 2014 의 crypto-like Hawkes decay 추정. boost=1.20 은 conservative — α_AB 직접 추정으로 0.06-0.15 시사. 더 큰 boost (1.5-2.0) 시도는 다음 학술 정합 후보.</div>
+</div>
+
+<div class="layer-card v2">
+<h3>📏 Sizing · Conviction-Power Kelly <span class="badge b-pass">PROD</span></h3>
+<p>Chandelier-pinned fixed-fractional risk × conviction-power amp × CVaR-floor cap × sizing_cap × safe leverage. 신호 강도에 *비선형* 으로 사이즈 스케일.</p>
+<div class="formula">stop_pct  = chandelier_mult · ATR / price
+base      = risk_per_trade / stop_pct          ← Chandelier 잠금
+confidence = clip(|LM|/lm_thresh, 0.5, 2.0) × clip(agree/3, 0.5, 1.0) ∈ [0.25, 2.0]
+amp       = confidence^k        (k=2 quadratic, MTZ 2011 robust range [1.5, 2.5])
+sized     = base · amp                          ← 16× weak-vs-strong ratio
+sized     = min(sized, sizing_cap=5)
+sized     ≤ cvar_floor / CVaR_α                 ← defense-in-depth
+leverage  = max(1, ⌈sized⌉), ≤ safe_stop_lev, ≤ leverage_cap=10</div>
+<div class="ref">학술 근거: MacLean-Thorp-Ziemba (2011) §3 (k∈[1.5, 2.5] robust); Cvitanić-Kim (2024) §3.2 drawdown-bounded log-growth; Cheng-Madhavan (2009) JIM 38(4) leveraged ETF vol drag; Browne (1996) conviction-power Kelly.</div>
+<div class="synergy"><strong>시너지:</strong> P1 의 adaptive chandelier 가 stop_pct 를 동적 조정 → base 가 자동으로 cluster phase 적응. amp 의 비선형성이 right-tail 을 의도적으로 over-weight. CVaR floor 가 fat-tail 환경에서 자동 de-leverage.</div>
+<div class="improvement"><strong>모니터링 포인트:</strong> k=2 의 OOS 적정성은 ±20% perturbation (k=1.5, k=2.5) 으로 검증됨 — 둘 다 PASS. <em>현재 sizer 는 학술 정합 안에서 최적</em>.</div>
+</div>
+
+<div class="layer-card rejected">
+<h3>🧮 Universal Kelly Calibrator <span class="badge b-rej">REJECTED · 코드 보존</span></h3>
+<p>Rolling 300-trade per-bin OOS Kelly 사이저 (Cover-Thomas 1991 §16 / MTZ 2011 §3). Heterogeneous Kelly 천장 +83,779%/yr 를 *실제로 수확* 하려고 구현. 측정된 lift 는 진짜 (Quarter-Kelly 에서 3.4× return 향상) 였으나 -20% MDD 게이트를 통과 못함.</p>
+<table>
+  <tr><th>α (MTZ §3)</th><th>수익률</th><th>Sharpe</th><th>MDD</th><th>verdict</th></tr>
+  <tr><td>1.00 (Full)</td><td>+122.7%</td><td>2.01</td><td>−64.1%</td><td style="color: var(--fail);">FAIL</td></tr>
+  <tr><td>0.50 (Half)</td><td>+53.4%</td><td>2.14</td><td>−40.2%</td><td style="color: var(--fail);">FAIL</td></tr>
+  <tr><td>0.25 (Quarter)</td><td>+27.3%</td><td>2.38</td><td>−22.8%</td><td style="color: var(--fail);">FAIL by 2.8pp</td></tr>
+  <tr><td>0 (analytical, v3+A2)</td><td>+7.9%</td><td>3.78</td><td>−3.8%</td><td style="color: var(--pass);">PASS (baseline)</td></tr>
+</table>
+<p>MTZ 2011 §3 가 published 한 *두* 상수 (0.5, 0.25) 가 모두 게이트 초과. α 를 더 낮추는 건 *parameter-tuning into the gate* = overfit (CLAUDE.md 절대 금지). 따라서 honest reject.</p>
+<div class="ref">학술 근거: Markowitz (1952); Cover &amp; Thomas (1991) <em>Elements of Information Theory</em> ch. 16 conditional log-optimal; MTZ (2011) §3 fractional Kelly; López de Prado (2018) <em>AFML</em> §10 Bayesian bet sizing; Dyck-Werner-Stambaugh (2005).</div>
+<div class="improvement"><strong>보존 이유 + 활용 조건:</strong> 사용자가 후일 risk budget 을 −30% MDD 로 완화 시 한 줄 (<code>StrategyParams.kelly_calibrator_enabled=True</code>) 로 즉시 활용 가능. Anti-overfit safeguards (rolling 300 window, min_per_bin=20, sizing_cap, bootstrap fallback, OOS purging) 그대로 보존.</div>
+</div>
+
+<div class="layer-card rejected">
+<h3>🌐 Multi-Timeframe LM (A1) <span class="badge b-rej">REJECTED · 코드 보존</span></h3>
+<p>Lee-Mykland 의 scale invariance (Lee-Mykland 2008 §2.4) 로 4h aggregated bars 에 LM 추가 적용. Bandy 2014 §5 의 √scale·ATR scale-aware chandelier 까지 결합했지만 OOS 검증 fail.</p>
+<table>
+  <tr><th>config</th><th>trades</th><th>Sharpe</th><th>win rate</th><th>verdict</th></tr>
+  <tr><td>v3+A2 (no A1)</td><td>302</td><td>3.78</td><td>43.7%</td><td style="color: var(--pass);">PASS</td></tr>
+  <tr><td>v3+A1+A2 (multi-scale)</td><td>270</td><td>2.53</td><td>37.4%</td><td style="color: var(--fail);">FAIL</td></tr>
+</table>
+<p>4h scale 에서 raw IC=+0.20 측정됐으나 (positive), 1h-bar exit 시스템과 mismatch — 4h 점프의 자연 폭이 1h-ATR chandelier 보다 커서 entry-exit 타이밍 불일치. Default <code>multi_scale_lm_factors=()</code> 로 비활성화. <em>4h-bar trailing exit + 4h-bar entry 타이밍 재설계</em> 후 재시험 가능.</p>
+</div>
+
+<div class="layer-card v3-p1">
+<h3>🛡️ OOS Adaptive Recalibration + HALT <span class="badge b-pass">PROD</span></h3>
+<p>매 cycle 마다 최근 OOS bars 에서 PSR / SR / DSR 계산. PSR &lt; 0.55 면 indicator 파라미터를 3번까지 자동 재보정 — 모두 실패 시 HALT (모든 포지션 강제 청산 + 신규 진입 차단).</p>
+<h4>구성</h4>
+<ul>
+  <li>PSR (Bailey-López de Prado 2012): Sharpe 의 통계적 유의성 — finite-sample skew/kurtosis 보정</li>
+  <li>DSR (Bailey-López de Prado 2014): 다중 비교 보정된 Sharpe — backtest overfitting 방어</li>
+  <li>warmup 5 cycles (live) / 3 windows (backtest): 초기 sample 부족 false-alarm 차단</li>
+  <li>MIN_SAMPLES = 50: 50 미만이면 게이트 평가 자체 skip</li>
+</ul>
+<div class="ref">학술 근거: Bailey-López de Prado (2012, 2014) PSR/DSR; López de Prado (2018) <em>AFML</em> §11 backtest cheating.</div>
+<div class="synergy"><strong>시너지:</strong> 모든 layer 의 상위 안전장치. 시그널이 *regime change* 로 무력해지면 손실 누적 전 자동 deleverage / HALT.</div>
+<div class="improvement"><strong>절대 금지:</strong> PSR/MDD/HALT 게이트 자체의 완화 — 안전장치를 부수면서 수익률 추구는 사용자의 본질적 자본 보호 의도와 정면 충돌. CLAUDE.md §5 명시.</div>
+</div>
+
+<!-- ───────── Performance & ceiling ───────── -->
+<h2>3. OOS 측정 정보 한계 (Grinold Fundamental Law)</h2>
+
+<p>
+<code>tools/upper_bound_analysis.py</code> 가 313심볼 × 1년 실데이터에서 측정한 IR = IC × √BR × TC.
+</p>
+
+<table>
+  <tr><th>측정</th><th>raw screener</th><th>post-strategy-filter</th></tr>
+  <tr><td>이벤트 수 (BR/yr)</td><td>6,800</td><td>4,675</td></tr>
+  <tr><td><strong>IC (5-fold OOS, Fisher 95% CI)</strong></td><td>−0.130 [−0.15, −0.11]</td><td><strong>−0.086</strong> [−0.11, −0.06]</td></tr>
+  <tr><td>mean PnL / event</td><td>+0.025%</td><td><strong>+0.237%</strong> (9× ↑)</td></tr>
+  <tr><td>PnL skew</td><td>+4.09</td><td><strong>+4.61</strong></td></tr>
+  <tr><td>win rate</td><td>36.7%</td><td>37.8%</td></tr>
+</table>
+
+<p>
+<strong>핵심 발견 1</strong>: IC 가 *음수* — Lee-Mykland 점프 시그널 자체는 48시간 forward return 과 음의 상관 (Lo-MacKinlay 1990 short-horizon overreaction). 그러나 mean PnL 는 *양수* → 수익의 원천은 *시그널 검출이 아니라 execution mechanics* (skew +4.6 의 두꺼운 right tail + 3-ATR 비대칭 chandelier + Conviction-Power Kelly 비선형 사이즈).
+</p>
+
+<p>
+<strong>핵심 발견 2 (heterogeneous Kelly)</strong>: 신호 강도 빈에 따라 *별도* μ_b/σ_b² 를 적용 시 — Markowitz 1952 / Cover-Thomas 1991 §16 conditional log-optimal — homogeneous Kelly 천장 588%/yr 의 *142×* = +83,779%/yr 가 이론적 ceiling. 이는 사용자의 단일 100,000%/yr 목표를 *수학적으로* 안에 포함하는 구간. 단 모든 fractional-Kelly 실험에서 -20% MDD 게이트 초과 — *현 risk budget 안에서는 추출 불가능*.
+</p>
+
+<!-- ───────── Improvement priority ───────── -->
+<h2>4. 개선 우선순위 (CLAUDE.md 진단 매핑)</h2>
+
+<table>
+  <tr><th>Priority</th><th>Lever</th><th>상태</th><th>다음 행동</th></tr>
+  <tr>
+    <td><strong>P1</strong></td>
+    <td>Exit management 정교화</td>
+    <td><span class="badge b-pass">DONE</span> v3 P1 Hawkes-decay chandelier</td>
+    <td>유지. <em>scale-aware exit</em> 으로 4h-scale LM (A1) 재시험 가능</td>
+  </tr>
+  <tr>
+    <td><strong>P2</strong></td>
+    <td>Sizing 비선형성 k 적정성</td>
+    <td><span class="badge b-pass">CONFIRMED</span> k=2 가 MTZ 2011 robust band [1.5, 2.5] 내</td>
+    <td>유지. tools/sizing_kelly_study.py 로 후일 재확인 가능</td>
+  </tr>
+  <tr>
+    <td><strong>P3</strong></td>
+    <td>Breadth utilisation</td>
+    <td><span class="badge b-pass">DONE</span> v3 P3 Faber pyramiding (132 → 302 trades, 3-leg)</td>
+    <td>유지. 추가 leg 확장은 학술 정당화 부족</td>
+  </tr>
+  <tr>
+    <td><strong>A2</strong></td>
+    <td>Cross-asset Hawkes leader-follower</td>
+    <td><span class="badge b-pass">DONE</span> v3 A2 boost=1.20 (sized × 1.44)</td>
+    <td>유지. boost 상향 (1.5-2.0) 시도는 학술 정합 안에서 가능</td>
+  </tr>
+  <tr>
+    <td><strong>B</strong></td>
+    <td>Signal-conditional Kelly calibrator</td>
+    <td><span class="badge b-rej">REJECTED</span> -20% MDD 게이트 초과 (Quarter-Kelly 도 -22.8%)</td>
+    <td>코드 보존 default OFF. <em>risk budget 완화 시 즉시 활용 가능</em></td>
+  </tr>
+  <tr>
+    <td><strong>A1</strong></td>
+    <td>Multi-timeframe LM (4h scale)</td>
+    <td><span class="badge b-rej">REJECTED</span> 1h-bar exit 와 mismatch (Sharpe 3.78 → 2.53, win 37.4%)</td>
+    <td>코드 보존 default OFF. <em>scale-aware exit machinery 재설계 후 재시험 가능</em></td>
+  </tr>
+  <tr>
+    <td><strong>—</strong></td>
+    <td><span class="check fail">DO NOT</span> 새 시그널 클래스 (multi-timeframe LM 외)</td>
+    <td><span class="badge b-rej">FORBIDDEN</span></td>
+    <td>IC 가 음수인 상태에서 새 시그널 추가 = overfit 정의 (CLAUDE.md §P4)</td>
+  </tr>
+  <tr>
+    <td><strong>—</strong></td>
+    <td><span class="check fail">DO NOT</span> OOS 게이트 자체 완화</td>
+    <td><span class="badge b-rej">FORBIDDEN</span></td>
+    <td>안전장치를 부수면서 수익률 추구 = 사용자 자본 보호 의도와 정면 충돌 (§2, §5)</td>
+  </tr>
+</table>
+
+<!-- ───────── Monitoring checklist ───────── -->
+<h2>5. 사용자 모니터링 체크리스트</h2>
+
+<p>다음 항목들을 주기적으로 검토해 strategy state 가 production-ready 한지 확인:</p>
+
+<ol>
+  <li class="check pass"><strong>v3+A2 baseline 5 게이트 PASS</strong>: <code>reports/production_validation_v3_a2.log</code> 가 5/5 + 6/6 robustness 보고하는지</li>
+  <li class="check pass"><strong>학술 reference 준수</strong>: 모든 새 변경이 코드 옆 reference 와 함께 commit 됐는지</li>
+  <li class="check pass"><strong>parity invariant</strong>: <code>simulator.py</code> 와 <code>strategy/trend_following.py</code> + <code>execution/engine.py</code> 가 같은 게이트/사이즈/OOS 재보정 호출하는지 (CLAUDE.md §4)</li>
+  <li class="check pass"><strong>OOS 재보정 안전장치</strong>: PSR &lt; 0.55 → HALT 가 force-close all positions 호출하는지 (tests/test_halt_semantics.py)</li>
+  <li class="check warn"><strong>Risk budget 재검토 여부</strong>: 사용자가 -30% MDD 허용 시 calibrator 활성화 가능 (현재는 -20% gate → 비활성)</li>
+  <li class="check pass"><strong>CLAUDE.md 절대 기준</strong>: 새 변경마다 "오버피팅 없이 OOS 재보정 + 수익률 최대화" 와 정합 확인</li>
+</ol>
+
+<p style="font-size: 12.5px; color: var(--muted); margin-top: 32px;">
+  <strong>현재 commit 시점</strong>: <code>1d0a0a5</code> · 브랜치 <code>claude/crypto-trend-following-system-on7RQ</code> · 테스트 51/51 PASS
+</p>
+
+</body>
+</html>
