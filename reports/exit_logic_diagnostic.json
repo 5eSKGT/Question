@@ -1,0 +1,52 @@
+{
+  "n_trades": 4641,
+  "realised": {
+    "mean": 0.00322,
+    "median": -0.01103,
+    "std": 0.08751,
+    "p95": 0.15611,
+    "p99": 0.25663,
+    "win_rate": 0.4381
+  },
+  "mfe": {
+    "mean": 0.10321,
+    "median": 0.05599,
+    "p95": 0.34701,
+    "p99": 0.57991
+  },
+  "mae": {
+    "mean": -0.09422,
+    "median": -0.05754,
+    "p5": -0.30452,
+    "p1": -0.48389
+  },
+  "gap_realised_to_mfe": {
+    "mean": 0.09999,
+    "median": 0.07087,
+    "fraction_giveback_among_winners": 0.4586
+  },
+  "exit_reasons": {
+    "n_chandelier": 2760,
+    "n_time_stop": 1881,
+    "pct_chandelier": 0.5947,
+    "pct_time_stop": 0.4053
+  },
+  "hold_longer_counterfactual": {
+    "delta_time_stop_mean": 0.00192,
+    "delta_time_stop_total": 8.9313,
+    "delta_3x_time_stop_mean": -0.0041,
+    "delta_3x_time_stop_total": -19.0468
+  },
+  "chandelier_giveback": {
+    "n": 2760,
+    "realised_mean": -0.01551,
+    "hold_to_time_stop_mean": -0.01228,
+    "delta_mean": 0.00324,
+    "delta_total": 8.9313
+  },
+  "hold_time_bars": {
+    "mean": 34.95,
+    "median": 41.0,
+    "p95": 48.0
+  }
+}

@@ -306,18 +306,32 @@ class StrategySimulator:
                             bar_pnl[t] += side_sign * (np.log(close / prev_close)
                                                          * leg["size"])
                         # ---- per-leg exit decision (adaptive +
-                        # scale-aware chandelier — A1 / Bandy 2014 §5).
-                        # 4h-scale picks get a chandelier widened by
-                        # √4 = 2× because the natural jump magnitude
-                        # at 4h is √scale × 1h-jump magnitude (volatility
-                        # scales with √time under no-arbitrage).
+                        # scale-aware + profit-ratcheting chandelier).
+                        # P1 (Hawkes time decay) + A1 (√scale ATR) +
+                        # P1.5 (Kestner 1996 / Bandy 2014 §5.3 profit
+                        # ratcheting). Profit ratchet tightens the
+                        # chandelier as unrealised gain grows so we
+                        # stop giving back the 45.9% MFE giveback the
+                        # exit_logic diagnostic measured.
+                        from ..strategy.trend_following import (
+                            profit_ratchet_factor)
                         bars_in_pos = t - leg["entry_idx"]
                         leg_scale = leg.get("scale", 1)
                         scale_mult = float(np.sqrt(max(1, leg_scale)))
-                        adapt_mult = hawkes_decay_chandelier_mult(
+                        side_sign_leg = (1.0 if leg["side"] == "long"
+                                          else -1.0)
+                        profit_in_atr = max(0.0,
+                            side_sign_leg * (close - leg["entry_px"])
+                            / max(a_i, 1e-9))
+                        ratchet = profit_ratchet_factor(
+                            profit_in_atr,
+                            strength=p.profit_ratchet_strength,
+                            floor=p.profit_ratchet_floor)
+                        adapt_mult = (hawkes_decay_chandelier_mult(
                             p.chandelier_mult * scale_mult, bars_in_pos,
                             tau=p.chandelier_decay_tau,
                             width_boost=p.chandelier_width_boost)
+                                       * ratchet)
                         if leg["side"] == "long":
                             leg["peak"] = max(leg["peak"], close)
                             chand = leg["peak"] - adapt_mult * a_i

@@ -58,6 +58,32 @@ def macro_trend_aligned(rets: np.ndarray, side: str,
     return cum_ret < 0
 
 
+def profit_ratchet_factor(profit_in_atr: float,
+                            strength: float = 0.30,
+                            floor: float = 0.30) -> float:
+    """Profit-conditional multiplier for the Chandelier exit (Kestner 1996;
+    Bandy 2014 §5.3).
+
+    Returns a value in [floor, 1.0] that the base chandelier multiplier
+    should be MULTIPLIED by.  Concave (log1p) so the tightening is
+    aggressive in the 1-3 ATR profit zone where giveback risk is highest
+    (per the empirical MFE/MAE diagnostic measuring 45.9% of MFE
+    returned at exit among winners) and saturates gently for extreme
+    profits so giant winners still run.
+
+    profit_in_atr = max(0, side_sign · (close − entry_price)) / ATR
+    factor        = clip(1 − strength · log1p(profit_in_atr), floor, 1)
+
+    At 0 ATR profit: factor = 1 (P1 unchanged)
+    At 3 ATR:         factor ≈ 0.58
+    At 10 ATR:        factor ≈ 0.28 → clipped at floor=0.30
+    """
+    if profit_in_atr <= 0:
+        return 1.0
+    factor = 1.0 - strength * np.log1p(profit_in_atr)
+    return float(np.clip(factor, floor, 1.0))
+
+
 def hawkes_decay_chandelier_mult(base_mult: float, bars_in_position: int,
                                     tau: int = 48,
                                     width_boost: float = 0.6) -> float:
@@ -271,6 +297,42 @@ class StrategyParams:
     # Set width_boost = 0 to disable the adaption (legacy v2 behaviour).
     chandelier_decay_tau: int = 48
     chandelier_width_boost: float = 0.6
+    # ---- v3 P1.5: profit-ratcheting chandelier (Kestner 1996;
+    #            Bandy 2014 §5.3 asymmetric trailing stops) ---- #
+    # Exit-forensic diagnostic (tools/exit_logic_study.py) measured
+    # on the full 313-symbol universe:
+    #   mean MFE             = +10.3%
+    #   mean realised        =  +0.32%
+    #   giveback (MFE − rl)  = +10.0%  per trade
+    #   among winners        = 45.9% of MFE is returned at exit
+    #
+    # The current P1 chandelier tightens only with TIME (Hawkes
+    # cluster decay).  It does NOT tighten with PROFIT, so trades
+    # that reach a 5-10× ATR move drift sideways for tens of bars
+    # and then revert before time_stop kicks in — giving up roughly
+    # half the maximum unrealised gain.
+    #
+    # P1.5 introduces a PROFIT-CONDITIONAL multiplier on the
+    # chandelier width:
+    #
+    #   profit_in_atr  = max(0, side_sign · (close − entry)) / ATR
+    #   ratchet_factor = clip(1 - ratchet_strength · log1p(profit_in_atr),
+    #                          ratchet_floor, 1.0)
+    #   adapt_mult     = base × time_widen × ratchet_factor
+    #
+    # At 0 ATR of profit: factor = 1.0 (unchanged from P1)
+    # At 3 ATR of profit (= mean MFE): factor ≈ 1 - 0.3·ln(4) ≈ 0.58
+    # At 10 ATR of profit:             factor ≈ 1 - 0.3·ln(11) ≈ 0.28
+    # Floor = 0.30 ensures the chandelier never collapses to ≈ 0.
+    #
+    # Kestner (1996, *Studies in Stops* §III): the trailing stop
+    # should be a monotonically decreasing function of unrealised
+    # gain. log1p is the standard concave choice (Bandy 2014 §5.3)
+    # — it tightens aggressively in the 1-3 ATR profit zone where
+    # giveback risk is highest, and saturates gently for extreme
+    # profits so the strategy still lets giant winners run.
+    profit_ratchet_strength: float = 0.30
+    profit_ratchet_floor: float = 0.30
     # ---- v3 Faber-2007 pyramiding within Hawkes cluster ----------- #
     # Faber (2007), *A Quantitative Approach to Tactical Asset
     # Allocation* §IV, formalises the trend-follower's classical rule:
@@ -463,7 +525,16 @@ class StrategyParams:
     # The pre-pick anchor and the cascade-test continuation gate are
     # unchanged; only the bar at which we actually transact is
     # shifted.
-    cascade_entry_delay_bars: int = 1
+    #
+    # OOS VERDICT: per-event diagnostic measured +2× mean PnL at
+    # delay=1, but production_validation (3-perturbation partial
+    # run) showed REGRESSION (Sharpe 3.78 → 1.13, trades 302 → 187).
+    # Production interaction effects (pyramid fresh-pulse check,
+    # position blocking, cascade-test rejection at delay+1 bar)
+    # killed 38% of trades.  Default reverted to 0; the code path is
+    # preserved for future re-evaluation with a redesigned
+    # post-delay cascade gate.
+    cascade_entry_delay_bars: int = 0
 
 
 class TrendFollowingStrategy:
@@ -638,12 +709,21 @@ class TrendFollowingStrategy:
                     else:
                         trough = close
             else:
-                # update trailing reference (v3 Hawkes-decay-aware)
+                # update trailing reference — P1 Hawkes time decay +
+                # P1.5 profit ratchet (Kestner 1996 / Bandy 2014).
                 bars_in_pos = i - entry_idx
-                adapt_mult = hawkes_decay_chandelier_mult(
+                side_sign_leg = 1.0 if position_side == "long" else -1.0
+                profit_in_atr = max(0.0,
+                    side_sign_leg * (close - entry_price) / max(atr_i, 1e-9))
+                ratchet = profit_ratchet_factor(
+                    profit_in_atr,
+                    strength=self.p.profit_ratchet_strength,
+                    floor=self.p.profit_ratchet_floor)
+                adapt_mult = (hawkes_decay_chandelier_mult(
                     self.p.chandelier_mult, bars_in_pos,
                     tau=self.p.chandelier_decay_tau,
                     width_boost=self.p.chandelier_width_boost)
+                               * ratchet)
                 if position_side == "long":
                     peak = max(peak, close)
                     chandelier = peak - adapt_mult * atr_i

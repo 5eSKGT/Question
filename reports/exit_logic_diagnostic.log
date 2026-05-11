@@ -1,0 +1,37 @@
+Universe: 313 symbols
+  scanned 50/313: trades=750
+  scanned 100/313: trades=1530
+  scanned 150/313: trades=2277
+  scanned 200/313: trades=3038
+  scanned 250/313: trades=3726
+  scanned 300/313: trades=4454
+  total trades = 4641
+
+======================================================================
+Exit-logic forensic diagnostic
+======================================================================
+  n trades       : 4641
+  realised mean  : +0.00322   median: -0.01103
+  MFE mean       : +0.10321   median: +0.05599
+  MAE mean       : -0.09422   median: -0.05754
+  gap realised→MFE mean : +0.09999
+    fraction-giveback among winners (gap/MFE) : 0.459
+
+  Exit reasons:
+    chandelier : 59.5%  (2760 trades)
+    time_stop  : 40.5%  (1881 trades)
+
+  Hold-longer counterfactual (current → hold-to-time_stop):
+    Δ mean      = +0.00192
+    Δ total     = +8.9313
+  Hold-very-long (current → 3× time_stop = 6 days):
+    Δ mean      = -0.00410
+    Δ total     = -19.0468
+
+  Among CHANDELIER-exited trades (n=2760):
+    realised mean             = -0.01551
+    if-held-to-time_stop mean = -0.01228
+    Δ mean (chand → ts)       = +0.00324
+    Δ total                   = +8.9313
+
+  → NEUTRAL — chandelier roughly optimal at the mean.

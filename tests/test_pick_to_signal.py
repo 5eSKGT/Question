@@ -84,7 +84,8 @@ def test_screener_short_pick_fires_on_down_jump_bar():
     base[-1] = base[-2] * 0.94                          # -6% down-jump
 
     df = _ohlcv(base)
-    strat = TrendFollowingStrategy(StrategyParams(chandelier_width_boost=0.0))
+    strat = TrendFollowingStrategy(StrategyParams(
+        chandelier_width_boost=0.0, profit_ratchet_floor=1.0))
     sigs = strat.generate_signals(df, screener_side="short",
                                     source=SignalSource.HIST)
     last_ts = df.index[-1]
@@ -142,7 +143,14 @@ def test_v2_2_cascade_continuation_fires_without_donchian_break():
     base[-1] = base[-2] * 1.02                # 2% continuation, well below recent high
 
     df = _ohlcv(base)
-    strat = TrendFollowingStrategy(StrategyParams())
+    # Isolate the v2.2 cascade-test ENTRY contract from later exit-side
+    # changes (P1 Hawkes-decay widening, P1.5 profit ratcheting) that
+    # affect when prior positions close.  width_boost=0 + ratchet_floor=1
+    # restores the legacy static chandelier so the test only verifies
+    # entry-on-continuation.
+    strat = TrendFollowingStrategy(StrategyParams(
+        chandelier_width_boost=0.0,
+        profit_ratchet_floor=1.0))
     sigs = strat.generate_signals(df, screener_side="long",
                                     source=SignalSource.HIST)
     last_ts = df.index[-1]
