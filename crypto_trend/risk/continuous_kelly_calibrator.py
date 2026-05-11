@@ -67,6 +67,16 @@ class ContinuousKellyCalibrator:
     sizing_cap: float = 5.0
     fractional_kelly: float = 0.25
     bandwidth_scale: float = 1.0     # multiplier on Silverman's bandwidth
+    # Hens-Mayer (2017) "Robust Kelly Strategies under Estimation
+    # Uncertainty" EJOR 256(1): estimation noise in μ̂ inflates the
+    # naive Kelly f = μ̂/σ̂², systematically OVER-BETTING when local
+    # samples are small. Penalty: subtract λ × SE(μ̂) from μ̂ before
+    # dividing by σ̂². λ=1 is the standard 1-σ shrinkage (the
+    # "conservative" recommendation in Hens-Mayer 2017 §4). This
+    # automatically shrinks high-conviction-but-noisy bins toward 0
+    # WITHOUT tuning the fractional-Kelly α (which would be gate-
+    # tuning per CLAUDE.md North Star).
+    robust_shrinkage_lambda: float = 1.0
 
     history: list[tuple[float, float]] = field(default_factory=list)
     _preds_arr: np.ndarray | None = None
@@ -136,8 +146,17 @@ class ContinuousKellyCalibrator:
         var = float((w * (self._pnls_arr - mu) ** 2).sum() / w_sum)
         if var < 1e-12:
             return float(bootstrap) if bootstrap is not None else 0.0
-        # Full Kelly f* = μ/σ², then apply fractional-Kelly α
-        f_full = mu / var
+        # Hens-Mayer (2017) §4 robust Kelly: SE(μ̂) at this query
+        # point under the local kernel weights ≈ sqrt(σ̂² / eff_n).
+        # Subtract λ standard errors from μ̂ before forming Kelly.
+        se_mu = float(np.sqrt(var / max(eff_n, 1.0)))
+        mu_robust = mu - self.robust_shrinkage_lambda * se_mu
+        # If the robust mean is non-positive, Kelly says don't bet
+        # (the naive μ̂/σ̂² would have been positive but we don't
+        # trust it given the standard error).
+        if mu_robust <= 0:
+            return 0.0
+        f_full = mu_robust / var
         f_clipped = float(np.clip(f_full, 0.0, self.sizing_cap))
         return f_clipped * float(self.fractional_kelly)
 

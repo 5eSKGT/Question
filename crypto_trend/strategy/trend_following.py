@@ -483,6 +483,11 @@ class StrategyParams:
     continuous_kelly_min_effective_n: float = 20.0
     continuous_kelly_fraction: float = 0.25      # MTZ 2011 §3 conservative
     continuous_kelly_bandwidth_scale: float = 1.0
+    # Hens-Mayer (2017) EJOR 256(1) robust shrinkage of Kelly under
+    # estimation uncertainty. λ=1 = subtract 1 standard error of μ̂
+    # from μ̂ before computing f = μ̂/σ̂² — automatically shrinks
+    # noisy high-conviction bins toward 0 without tuning α.
+    continuous_kelly_robust_lambda: float = 1.0
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05

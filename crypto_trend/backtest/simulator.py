@@ -206,6 +206,7 @@ class StrategySimulator:
                 sizing_cap=p.sizing_cap,
                 fractional_kelly=p.continuous_kelly_fraction,
                 bandwidth_scale=p.continuous_kelly_bandwidth_scale,
+                robust_shrinkage_lambda=p.continuous_kelly_robust_lambda,
             )
         kelly_calibrator = self.kelly_calibrator if p.kelly_calibrator_enabled else None
         continuous_kelly = (self.continuous_kelly_calibrator
