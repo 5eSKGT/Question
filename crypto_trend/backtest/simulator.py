@@ -82,6 +82,9 @@ class StrategySimulator:
     # OOS windows the calibrator has trained on prior-OOS realisations
     # only (strict purging — past trades inform future sizing).
     kelly_calibrator: object | None = None
+    # v3 B' continuous (Nadaraya-Watson) calibrator. Persistent across
+    # walk-forward windows; lazy-instantiated on first run().
+    continuous_kelly_calibrator: object | None = None
     # entry_predictor must ALSO persist across windows: a leg opened
     # in window N may exit in window N+1 (chandelier or mark-out). If
     # entry_predictor were a local in run() its key would be lost
@@ -190,7 +193,21 @@ class StrategySimulator:
                 min_per_bin=p.kelly_calibrator_min_per_bin,
                 sizing_cap=p.sizing_cap,
             )
+        # Continuous (Nadaraya-Watson) calibrator: lazy-init on first run().
+        if (p.continuous_kelly_enabled
+                and self.continuous_kelly_calibrator is None):
+            from ..risk.continuous_kelly_calibrator import ContinuousKellyCalibrator
+            self.continuous_kelly_calibrator = ContinuousKellyCalibrator(
+                lookback_trades=p.continuous_kelly_lookback,
+                min_warmup_trades=p.continuous_kelly_min_warmup,
+                min_effective_n=p.continuous_kelly_min_effective_n,
+                sizing_cap=p.sizing_cap,
+                fractional_kelly=p.continuous_kelly_fraction,
+                bandwidth_scale=p.continuous_kelly_bandwidth_scale,
+            )
         kelly_calibrator = self.kelly_calibrator if p.kelly_calibrator_enabled else None
+        continuous_kelly = (self.continuous_kelly_calibrator
+                              if p.continuous_kelly_enabled else None)
         # Use the persistent self.entry_predictor (typed map of
         # (sym, entry_idx) → predictor) so legs that span windows
         # don't lose their predictor reference between sim.run()
@@ -321,17 +338,16 @@ class StrategySimulator:
                                 bars_held=bars_in_pos,
                                 exit_reason=reason,
                             ))
-                            # Feed the calibrator with the closed trade.
-                            if kelly_calibrator is not None:
-                                key = (sym, leg["entry_idx"])
-                                pred = entry_predictor.pop(key, None)
-                                if pred is not None:
-                                    # Side-aligned realised log return
-                                    # (PnL on a unit-size position).
-                                    realised_log = side_sign * float(
-                                        np.log(exit_px / leg["entry_px"]))
-                                    kelly_calibrator.add_trade(
-                                        pred, realised_log)
+                            # Feed both calibrators with the closed trade.
+                            key = (sym, leg["entry_idx"])
+                            pred = entry_predictor.pop(key, None)
+                            if pred is not None:
+                                realised_log = side_sign * float(
+                                    np.log(exit_px / leg["entry_px"]))
+                                if kelly_calibrator is not None:
+                                    kelly_calibrator.add_trade(pred, realised_log)
+                                if continuous_kelly is not None:
+                                    continuous_kelly.add_trade(pred, realised_log)
                         else:
                             surviving.append(leg)
                     if surviving:
@@ -509,6 +525,13 @@ class StrategySimulator:
                     f_abs = f_abs / max(1, p.max_pyramid_legs)
                     if f_abs > 0:
                         size = float(min(f_abs, p.sizing_cap))
+                # v3 B' continuous-Kelly override (Nadaraya-Watson kernel
+                # regression). Already applies fractional_kelly internally.
+                if continuous_kelly is not None and continuous_kelly.is_warm():
+                    f_cont = continuous_kelly.kelly_fraction(predictor)
+                    f_cont = f_cont / max(1, p.max_pyramid_legs)
+                    if f_cont > 0:
+                        size = float(min(f_cont, p.sizing_cap))
                 if size <= 0:
                     continue
                 # Cap so total exposure respects sizing_cap.
@@ -528,9 +551,9 @@ class StrategySimulator:
                     trough=float(close),
                     scale=int(pick_scale),
                 ))
-                # Record the predictor used so the calibrator can
-                # ingest the realised pnl when this leg exits.
-                if kelly_calibrator is not None:
+                # Record the predictor used so any active calibrator
+                # can ingest the realised pnl when this leg exits.
+                if kelly_calibrator is not None or continuous_kelly is not None:
                     entry_predictor[(sym, t)] = float(predictor)
                 consumed_pulse_bar[sym] = t
 
@@ -556,11 +579,13 @@ class StrategySimulator:
                     bars_held=n_bars - 1 - leg["entry_idx"],
                     exit_reason="mark_out",
                 ))
-                if kelly_calibrator is not None:
-                    pred = entry_predictor.pop((sym, leg["entry_idx"]), None)
-                    if pred is not None:
-                        realised_log = side_sign * float(np.log(close / leg["entry_px"]))
+                pred = entry_predictor.pop((sym, leg["entry_idx"]), None)
+                if pred is not None:
+                    realised_log = side_sign * float(np.log(close / leg["entry_px"]))
+                    if kelly_calibrator is not None:
                         kelly_calibrator.add_trade(pred, realised_log)
+                    if continuous_kelly is not None:
+                        continuous_kelly.add_trade(pred, realised_log)
 
         exposure = bars_with_position / max(n_bars - warmup_bars, 1)
 

@@ -1,0 +1,31 @@
+{
+  "n_symbols_total": 313,
+  "n_symbols_with_events": 313,
+  "n_symbols_eligible": 269,
+  "total_events": 4675,
+  "universe_pooled": {
+    "mean_pnl": 0.00291,
+    "std_pnl": 0.08761,
+    "kelly_u": 0.379
+  },
+  "per_symbol_distribution": {
+    "kelly_s_mean": 1.251,
+    "kelly_s_std": 1.534,
+    "kelly_s_p25": 0.0,
+    "kelly_s_p50": 0.606,
+    "kelly_s_p75": 2.088,
+    "kelly_s_p95": 4.975,
+    "kelly_s_max": 5.0
+  },
+  "hierarchical_shrinkage": {
+    "var_kellies_observed": 2.3529,
+    "within_sampling_var_approx": 8.506,
+    "between_symbol_var_eb": 0.0,
+    "shrinkage_factor": 0.0,
+    "interpretation": "shrinkage\u22481 = strong symbol heterogeneity (use per-symbol Kelly), shrinkage\u22480 = no heterogeneity beyond noise (use pool). 0 < shrinkage < 1 = partial shrinkage toward pool."
+  },
+  "per_symbol_heterogeneous_kelly_ceiling": {
+    "annual_log_growth": 3.319,
+    "annual_return_pct": 2663.3
+  }
+}

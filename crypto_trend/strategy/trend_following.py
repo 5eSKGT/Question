@@ -369,6 +369,27 @@ class StrategyParams:
     # conservative of the two MTZ-published constants).  Used only
     # when ``kelly_calibrator_enabled=True``.
     kelly_calibrator_fraction: float = 0.25
+    # ---- v3 B' : CONTINUOUS Kelly via Nadaraya-Watson kernel regression --- #
+    # The discrete-bin KellyCalibrator suffered from (a) bin-0 always
+    # empty (digitize edge artifact), (b) middle-bin sparsity from the
+    # discrete predictor distribution, (c) quantisation loss between
+    # bin centres.  ContinuousKellyCalibrator replaces the 6 quantile
+    # bins with a non-parametric kernel regression
+    #
+    #     μ̂(p) = Σ K_h(p-p_i)·r_i / Σ K_h(p-p_i)        (Nadaraya 1964)
+    #     σ̂²(p) similarly, then  f(p) = clip(μ̂/σ̂²) × α
+    #
+    # with bandwidth h via Silverman's rule (1986 §3.4) and effective
+    # sample-size lower-bound (Györfi-Krzyzak-Walk 2008 §5.4).  This is
+    # the academically-correct non-parametric estimator of the
+    # heterogeneous-Kelly ceiling that upper_bound_analysis measures.
+    # Disabled by default (legacy v3+A2 baseline preserved).
+    continuous_kelly_enabled: bool = False
+    continuous_kelly_lookback: int = 800
+    continuous_kelly_min_warmup: int = 100
+    continuous_kelly_min_effective_n: float = 20.0
+    continuous_kelly_fraction: float = 0.25      # MTZ 2011 §3 conservative
+    continuous_kelly_bandwidth_scale: float = 1.0
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05

@@ -1,0 +1,29 @@
+Universe: 313 symbols
+  scanned 75/313: events=1156
+  scanned 150/313: events=2289
+  scanned 225/313: events=3396
+  scanned 300/313: events=4488
+
+======================================================================
+Per-symbol Kelly heterogeneity (James-Stein 1961 / Efron-Morris 1972)
+======================================================================
+  symbols with events    : 313 / 313
+  eligible (≥10 events) : 269
+  total filter-passed events: 4675
+
+  Pool: μ=+0.00291  σ=0.08761  Kelly_u=0.379
+  Per-symbol Kelly distribution:
+    mean   = 1.251
+    p25-50-75 = 0.000 / 0.606 / 2.088
+    p95 / max = 4.975 / 5.000
+
+  Hierarchical Bayes (Efron-Morris 1972):
+    Var(f_s) observed       = 2.3529
+    Var(f_s) from sampling  ≈ 8.5060
+    Var(f_s) between symbols= 0.0000
+    shrinkage factor λ      = 0.000  (0=pool, 1=symbol)
+
+  Heterogeneous-Kelly ceiling (per-symbol w/ shrinkage):
+    G_year = 3.3190  →  +2663.3% / yr
+
+  → WEAK heterogeneity. Pooled calibrator is fine; per-symbol gain ≈ 0.
