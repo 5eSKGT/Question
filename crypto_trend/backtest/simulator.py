@@ -506,11 +506,15 @@ class StrategySimulator:
                 if lead_present:
                     boost = p.leader_anchor_boost
                     lm_signed = lm_signed * boost
-                # Pyramid risk fractioning: each leg gets risk_per_trade
-                # split across the maximum permitted legs so the
-                # aggregate cluster risk respects partial-Kelly
-                # (MacLean-Thorp-Ziemba 2011 §3).
-                per_leg_risk = (p.risk_per_trade / max(1, p.max_pyramid_legs))
+                # v3 P3.1: pyramid risk fractioning — first leg uses
+                # full risk_per_trade (Faber 2007 §IV scale-into-
+                # winners), additional pyramid legs share /N.
+                is_first_leg = len(legs_now) == 0
+                if p.first_leg_full_kelly and is_first_leg:
+                    per_leg_risk = p.risk_per_trade
+                else:
+                    per_leg_risk = (p.risk_per_trade
+                                     / max(1, p.max_pyramid_legs))
                 decision = optimal_position(
                     sample,
                     price=close, atr=a_i,
@@ -547,20 +551,18 @@ class StrategySimulator:
                 if kelly_calibrator is not None and kelly_calibrator.is_warm():
                     f_signed = kelly_calibrator.kelly_fraction(predictor)
                     f_abs = abs(f_signed)
-                    # MacLean-Thorp-Ziemba 2011 §3 fractional Kelly:
-                    # scale full per-bin Kelly by α ∈ [0.25, 0.5] for
-                    # drawdown-bounded log-growth optimisation.
+                    # MTZ 2011 §3 fractional Kelly.
                     f_abs = f_abs * float(p.kelly_calibrator_fraction)
-                    # Apply the same per-leg risk fractioning as the
-                    # analytical sizer so pyramiding is consistent.
-                    f_abs = f_abs / max(1, p.max_pyramid_legs)
+                    # v3 P3.1: first leg gets full Kelly; pyramid legs /N.
+                    if not (p.first_leg_full_kelly and is_first_leg):
+                        f_abs = f_abs / max(1, p.max_pyramid_legs)
                     if f_abs > 0:
                         size = float(min(f_abs, p.sizing_cap))
-                # v3 B' continuous-Kelly override (Nadaraya-Watson kernel
-                # regression). Already applies fractional_kelly internally.
+                # v3 B' continuous-Kelly override (Nadaraya-Watson).
                 if continuous_kelly is not None and continuous_kelly.is_warm():
                     f_cont = continuous_kelly.kelly_fraction(predictor)
-                    f_cont = f_cont / max(1, p.max_pyramid_legs)
+                    if not (p.first_leg_full_kelly and is_first_leg):
+                        f_cont = f_cont / max(1, p.max_pyramid_legs)
                     if f_cont > 0:
                         size = float(min(f_cont, p.sizing_cap))
                 if size <= 0:

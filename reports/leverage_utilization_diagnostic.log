@@ -1,0 +1,30 @@
+Universe: 313 symbols
+  scanned 75/313: trades=1156
+  scanned 150/313: trades=2289
+  scanned 225/313: trades=3396
+  scanned 300/313: trades=4488
+  total trades = 4675
+
+======================================================================
+Leverage utilisation diagnostic — current vs Kelly target
+======================================================================
+  n trades : 4675
+  pool μ=+0.00291 σ=0.08761 → Kelly full = 0.379  Quarter = 0.095
+
+  Per-bin (quartile of predictor):
+  bin     n          μ        σ   KellyQ  cur_sized
+    0   779 -0.01017 0.07670   -0.432     0.0270
+    1   779 -0.00018 0.08149   -0.007     0.0360
+    2   779 +0.00135 0.08287    0.049     0.0430
+    3   779 +0.01139 0.08150    0.429     0.0550
+    4   779 +0.01274 0.09250    0.372     0.1010
+    5   780 +0.00231 0.10563    0.052     0.1230
+
+  Current sized:   mean=0.0643  max=5.0000
+  Current leverage: mean=1.02x  max=5x  99.6% at 1x
+
+  Per-leg Kelly target (with /3): mean=0.0501
+  First-leg Kelly target (no /3): mean=0.1503
+  Utilisation ratio (current / per-leg) : +10546476.004
+  Utilisation ratio (current / first-leg): +10546474.786
+

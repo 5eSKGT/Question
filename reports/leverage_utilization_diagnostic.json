@@ -1,0 +1,92 @@
+{
+  "n_trades": 4675,
+  "pool": {
+    "mean_pnl": 0.00291,
+    "std_pnl": 0.08761,
+    "kelly_full": 0.379,
+    "kelly_quarter": 0.095
+  },
+  "per_bin": [
+    {
+      "bin": 0,
+      "n": 779,
+      "mu": -0.01017,
+      "sd": 0.0767,
+      "kelly_full": -1.729,
+      "kelly_quarter": -0.432,
+      "f_pyramid_3": -0.144,
+      "mean_sized_current": 0.027
+    },
+    {
+      "bin": 1,
+      "n": 779,
+      "mu": -0.00018,
+      "sd": 0.08149,
+      "kelly_full": -0.027,
+      "kelly_quarter": -0.007,
+      "f_pyramid_3": -0.002,
+      "mean_sized_current": 0.036
+    },
+    {
+      "bin": 2,
+      "n": 779,
+      "mu": 0.00135,
+      "sd": 0.08287,
+      "kelly_full": 0.197,
+      "kelly_quarter": 0.049,
+      "f_pyramid_3": 0.016,
+      "mean_sized_current": 0.043
+    },
+    {
+      "bin": 3,
+      "n": 779,
+      "mu": 0.01139,
+      "sd": 0.0815,
+      "kelly_full": 1.715,
+      "kelly_quarter": 0.429,
+      "f_pyramid_3": 0.143,
+      "mean_sized_current": 0.055
+    },
+    {
+      "bin": 4,
+      "n": 779,
+      "mu": 0.01274,
+      "sd": 0.0925,
+      "kelly_full": 1.488,
+      "kelly_quarter": 0.372,
+      "f_pyramid_3": 0.124,
+      "mean_sized_current": 0.101
+    },
+    {
+      "bin": 5,
+      "n": 780,
+      "mu": 0.00231,
+      "sd": 0.10563,
+      "kelly_full": 0.207,
+      "kelly_quarter": 0.052,
+      "f_pyramid_3": 0.017,
+      "mean_sized_current": 0.123
+    }
+  ],
+  "current_sized": {
+    "mean": 0.0643,
+    "median": 0.0358,
+    "p95": 0.1124,
+    "max": 5.0
+  },
+  "current_leverage": {
+    "mean": 1.016,
+    "median": 1,
+    "p95": 1,
+    "max": 5,
+    "pct_at_1x": 0.9959,
+    "pct_at_sizing_cap": 0.0034
+  },
+  "kelly_utilisation": {
+    "per_leg_target_mean": 0.0501,
+    "first_leg_target_mean": 0.1503,
+    "ratio_current_to_per_leg": 10546476.004,
+    "ratio_current_to_first_leg": 10546474.786
+  },
+  "diagnosis": "ratio_current_to_first_leg << 1 \u21d2 analytical sizer is under-betting the FIRST leg vs the heterogeneous Kelly target by removing the /max_pyramid_legs discount from the first (only) leg of a cluster.  ratio_to_per_leg \u2248 1 is the design intent (Kelly_aggregate = Kelly_target via pyramid risk-fractioning, Faber 2007 \u00a7IV + MTZ 2011 \u00a73)."
+}

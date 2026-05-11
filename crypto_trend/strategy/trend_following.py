@@ -348,6 +348,27 @@ class StrategyParams:
     # Set max_pyramid_legs=1 to revert to single-leg behaviour.
     max_pyramid_legs: int = 3
     pyramid_in_profit_required: bool = True
+    # v3 P3.1: first-leg full Kelly (Faber 2007 §IV pyramid intent).
+    # The /max_pyramid_legs fractioning is meant to keep AGGREGATE
+    # cluster risk = single-leg risk when MULTIPLE legs stack.  The
+    # original Faber 2007 rule scales INTO winners — it does NOT
+    # penalise singleton trades.  The leverage_utilization_diagnostic
+    # (reports/leverage_utilization_diagnostic.log) measured the
+    # consequence: 99.6% of trades use 1× leverage, mean sized=0.064,
+    # vs heterogeneous-Kelly first-leg target ≈ 0.15 (2.3× under-bet).
+    # Under-betting bin 3-4 (the empirically-profitable bins) by
+    # 7.8×/3.7×.
+    # With this flag on, the FIRST leg of a cluster uses full
+    # risk_per_trade; only ADDITIONAL pyramid legs apply the /N
+    # discount. Aggregate cluster risk in a 3-legs-fired scenario:
+    #   leg 1 (first):  risk_per_trade
+    #   leg 2 (pyramid): risk_per_trade / N
+    #   leg 3 (pyramid): risk_per_trade / N
+    #   aggregate:      risk_per_trade × (1 + 2/N)
+    # With N=3 this is 1.67 × risk_per_trade — slightly above single-leg
+    # but well below the un-fractioned 3 × risk_per_trade. The trade-off
+    # is academically defensible: scale-into-winners with capped escalation.
+    first_leg_full_kelly: bool = True
     # ---- v3 A2: cross-asset Hawkes leader-follower boost --------- #
     # Aït-Sahalia, Cacho-Diaz & Laeven (2014), JFE 117(3) §3-4:
     # mutually-exciting Hawkes jump processes show cross-excitation
