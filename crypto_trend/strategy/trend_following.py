@@ -466,8 +466,18 @@ class StrategyParams:
     # sample-size lower-bound (Györfi-Krzyzak-Walk 2008 §5.4).  This is
     # the academically-correct non-parametric estimator of the
     # heterogeneous-Kelly ceiling that upper_bound_analysis measures.
-    # Disabled by default (legacy v3+A2 baseline preserved).
-    continuous_kelly_enabled: bool = False
+    # v3 L2: enabled by default.  In combination with P3.1
+    # first_leg_full_kelly + L5 leverage_cap=20, this engages the
+    # full heterogeneous-Kelly sizing pipeline:
+    #
+    #   Conviction-Power amp = conf²       (LEGACY: hand-designed)
+    #   → ContinuousKelly(predictor)        (NEW: Nadaraya-Watson NW
+    #                                        regression of μ̂/σ̂² over
+    #                                        the same predictor)
+    #
+    # Quarter-Kelly fractional multiplier (MTZ 2011 §3 conservative)
+    # is retained as the drawdown-bounded ceiling.
+    continuous_kelly_enabled: bool = True
     continuous_kelly_lookback: int = 800
     continuous_kelly_min_warmup: int = 100
     continuous_kelly_min_effective_n: float = 20.0
@@ -488,7 +498,15 @@ class StrategyParams:
     # capital on the high-conviction tail.
     risk_per_trade: float = 0.005     # baseline 0.5% Kelly fraction (graded)
     sizing_cap: float = 5.0           # absolute fraction ceiling (with leverage)
-    leverage_cap: float = 10.0        # broker leverage cap (Bitget allows ≥ 20×)
+    # leverage_cap = 20 (v3 L5).  Bitget supports up to 125×; the
+    # leverage_utilisation_diagnostic showed 99.6% trades at 1× because
+    # sized typically stays below 1.  Raising the cap to 20 only matters
+    # for max-conviction tight-stop trades where Kelly-recommended sized
+    # > 10 (currently truncated at 10).  Must be OOS-validated together
+    # with L2 (ContinuousKellyCalibrator) — first-leg-full Kelly +
+    # 20× cap unlocks the heterogeneous-Kelly ceiling regions where
+    # bin-conditional μ/σ² is large.
+    leverage_cap: float = 20.0
     # Conviction exponent reduced from 3 → 2 in AlphaPulse v2: cubic was
     # over-amplifying *misjudged* max-conviction trades, contributing
     # to the −25% backtest blow-up observed pre-TSM-filter. Quadratic
