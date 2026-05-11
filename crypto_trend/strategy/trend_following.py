@@ -449,6 +449,21 @@ class StrategyParams:
     # dominates breakout heuristics. Set to False for legacy v2.1
     # behaviour (Donchian-gated).
     screener_continuation_entry: bool = True
+    # ---- v3 C: cascade-test entry delay (Lo-MacKinlay 1990) ----- #
+    # Diagnostic tools/entry_timing_study.py measured (313 symbols,
+    # 1y real data):
+    #   delay=0: mean PnL +0.29%, Sharpe/evt +0.033, win 43.7%
+    #   delay=1: mean PnL +0.58%, Sharpe/evt +0.067, win 46.8%
+    #   delay=2: mean PnL +0.53%, Sharpe/evt +0.066, win 46.9%
+    # Firing entry at the same bar as the screener pulse captures the
+    # jump bar's peak/trough — the price has already moved away from
+    # the optimal entry.  Lo-MacKinlay (1990) RFS 3(2) short-horizon
+    # overreaction: 1 bar later mean-reversion gives a materially
+    # better entry while Hawkes-cluster continuation remains active.
+    # The pre-pick anchor and the cascade-test continuation gate are
+    # unchanged; only the bar at which we actually transact is
+    # shifted.
+    cascade_entry_delay_bars: int = 1
 
 
 class TrendFollowingStrategy:

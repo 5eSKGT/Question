@@ -1,0 +1,40 @@
+universe: 40 symbols (subsampled for tractability)
+
+--- window 1/6: bars 720-888 ---
+  PSR-target: log_ret = +0.02014 (PSR=0.985, SR=+12.97)
+  Return-target: log_ret = +0.02460 (PSR=0.985, SR=+12.94)
+  Δ log_ret = +0.00446
+
+--- window 2/6: bars 888-1056 ---
+  PSR-target: log_ret = +0.00015 (PSR=0.592, SR=+1.69)
+  Return-target: log_ret = +0.00029 (PSR=0.592, SR=+1.70)
+  Δ log_ret = +0.00014
+
+--- window 3/6: bars 1056-1224 ---
+  PSR-target: log_ret = -0.00117 (PSR=0.247, SR=-4.95)
+  Return-target: log_ret = -0.00117 (PSR=0.247, SR=-4.95)
+  Δ log_ret = +0.00000
+
+--- window 4/6: bars 1224-1392 ---
+  PSR-target: log_ret = -0.00801 (PSR=0.186, SR=-6.30)
+  Return-target: log_ret = -0.00801 (PSR=0.186, SR=-6.30)
+  Δ log_ret = +0.00000
+
+--- window 5/6: bars 1392-1560 ---
+  PSR-target: log_ret = -0.00096 (PSR=0.309, SR=-3.60)
+  Return-target: log_ret = -0.00096 (PSR=0.309, SR=-3.60)
+  Δ log_ret = +0.00000
+
+--- window 6/6: bars 1560-1728 ---
+  PSR-target: log_ret = +0.00158 (PSR=0.561, SR=+1.11)
+  Return-target: log_ret = +0.00158 (PSR=0.561, SR=+1.11)
+  Δ log_ret = +0.00000
+
+======================================================================
+Recalibration efficacy diagnostic — PSR vs Return target
+======================================================================
+  Σ log_ret (PSR-target)    = +0.0117  → +1.2% over evaluated windows
+  Σ log_ret (return-target) = +0.0163  → +1.6%
+  Δ                          = +0.0046
+
+  → MARGINAL improvement.  Worth implementing but small.

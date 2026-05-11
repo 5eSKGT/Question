@@ -1,0 +1,50 @@
+{
+  "0": {
+    "n_events": 4675,
+    "mean_pnl": 0.00291,
+    "std_pnl": 0.08761,
+    "win_rate": 0.4366,
+    "sharpe_per_event": 0.0332,
+    "kelly_f": 0.379
+  },
+  "1": {
+    "n_events": 4601,
+    "mean_pnl": 0.00577,
+    "std_pnl": 0.08601,
+    "win_rate": 0.4675,
+    "sharpe_per_event": 0.0671,
+    "kelly_f": 0.78
+  },
+  "2": {
+    "n_events": 4458,
+    "mean_pnl": 0.00534,
+    "std_pnl": 0.08142,
+    "win_rate": 0.4688,
+    "sharpe_per_event": 0.0656,
+    "kelly_f": 0.806
+  },
+  "3": {
+    "n_events": 4399,
+    "mean_pnl": 0.00349,
+    "std_pnl": 0.08092,
+    "win_rate": 0.461,
+    "sharpe_per_event": 0.0431,
+    "kelly_f": 0.532
+  },
+  "6": {
+    "n_events": 4153,
+    "mean_pnl": 0.00237,
+    "std_pnl": 0.08037,
+    "win_rate": 0.4686,
+    "sharpe_per_event": 0.0295,
+    "kelly_f": 0.366
+  },
+  "12": {
+    "n_events": 3808,
+    "mean_pnl": 0.00109,
+    "std_pnl": 0.08217,
+    "win_rate": 0.463,
+    "sharpe_per_event": 0.0133,
+    "kelly_f": 0.162
+  }
+}

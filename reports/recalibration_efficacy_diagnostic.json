@@ -1,0 +1,59 @@
+{
+  "n_windows_evaluated": 6,
+  "cum_log_ret_psr_target": 0.0117,
+  "cum_log_ret_return_target": 0.0163,
+  "delta_cum_log_ret": 0.0046,
+  "psr_target_annualised_pct": 1.2,
+  "return_target_annualised_pct": 1.6,
+  "window_results": [
+    {
+      "window": 1,
+      "psr_target_log_ret": 0.02014,
+      "return_target_log_ret": 0.0246,
+      "delta_log_ret": 0.00446,
+      "n_passing_candidates": 27,
+      "n_candidates_total": 27
+    },
+    {
+      "window": 2,
+      "psr_target_log_ret": 0.00015,
+      "return_target_log_ret": 0.00029,
+      "delta_log_ret": 0.00014,
+      "n_passing_candidates": 18,
+      "n_candidates_total": 27
+    },
+    {
+      "window": 3,
+      "psr_target_log_ret": -0.00117,
+      "return_target_log_ret": -0.00117,
+      "delta_log_ret": 0.0,
+      "n_passing_candidates": 0,
+      "n_candidates_total": 27
+    },
+    {
+      "window": 4,
+      "psr_target_log_ret": -0.00801,
+      "return_target_log_ret": -0.00801,
+      "delta_log_ret": 0.0,
+      "n_passing_candidates": 0,
+      "n_candidates_total": 27
+    },
+    {
+      "window": 5,
+      "psr_target_log_ret": -0.00096,
+      "return_target_log_ret": -0.00096,
+      "delta_log_ret": 0.0,
+      "n_passing_candidates": 0,
+      "n_candidates_total": 27
+    },
+    {
+      "window": 6,
+      "psr_target_log_ret": 0.00158,
+      "return_target_log_ret": 0.00158,
+      "delta_log_ret": 0.0,
+      "n_passing_candidates": 3,
+      "n_candidates_total": 27
+    }
+  ],
+  "interpretation": "POSITIVE delta_cum_log_ret means return-target recalibration extracts strictly more log-growth than PSR-target while still respecting the PSR \u2265 0.55 + SR \u2265 0 gate.  In that case the current AdaptiveOOS.recalibrate is leaving return on the table and should be replaced by constrained Sharpe maximization (L\u00f3pez de Prado & Lewis 2018)."
+}

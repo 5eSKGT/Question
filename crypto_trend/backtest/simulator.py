@@ -160,12 +160,14 @@ class StrategySimulator:
         trades: list[Trade] = []
         bar_pnl = np.zeros(n_bars, dtype=float)
         bars_with_position = 0
-        # v3 A1: active_picks now carries (side, expiry, anchor, scale).
-        # ``scale`` is the screener-detection timeframe multiplier (1 =
-        # native 1h; 4 = 4h aggregated). The strategy uses scale to
-        # widen the chandelier on entries from longer-scale picks
-        # (Bandy 2014 §5: ATR-based stops scale with √timeframe).
-        active_picks: dict[str, tuple[str, int, float, int]] = {}
+        # v3 A1+C: active_picks carries (side, expiry, anchor, scale,
+        # registered_at_bar).  ``registered_at_bar`` is the bar index
+        # at which the screener fired for this pick episode; it is
+        # used to enforce ``cascade_entry_delay_bars`` so that picks
+        # don't fire entry at the jump-bar close (which is the local
+        # peak/trough — Lo-MacKinlay 1990 short-horizon overreaction)
+        # but rather ``delay`` bars later.
+        active_picks: dict[str, tuple[str, int, float, int, int]] = {}
         # v3 tracker — bar at which the current pick episode for `sym`
         # last received a *fresh* (not just TTL-extended) screener fire.
         # Used as the "new cluster pulse" trigger for pyramiding.
@@ -249,16 +251,24 @@ class StrategySimulator:
                         leader_jump_history[r.side].append((t, r.symbol))
                     pick_scale = getattr(r, "scale", 1)
                     if r.symbol in active_picks:
-                        side_old, _expiry_old, anchor_old, scale_old = active_picks[r.symbol]
+                        (side_old, _expiry_old, anchor_old, scale_old,
+                          reg_old) = active_picks[r.symbol]
                         if side_old == r.side:
-                            # Keep the larger scale (slower cluster wins).
+                            # Keep the larger scale (slower cluster wins)
+                            # AND the EARLIER registered_at (so delay is
+                            # measured from the first pick of the episode,
+                            # not the most recent refresh — otherwise the
+                            # delay never elapses as long as picks keep
+                            # refreshing every bar).
                             new_scale = max(scale_old, pick_scale)
                             active_picks[r.symbol] = (
-                                r.side, t + self.pick_ttl, anchor_old, new_scale)
+                                r.side, t + self.pick_ttl,
+                                anchor_old, new_scale, reg_old)
                             continue
                     pre_pick_close = float(pre[r.symbol].closes[max(0, t - 1)])
                     active_picks[r.symbol] = (
-                        r.side, t + self.pick_ttl, pre_pick_close, pick_scale)
+                        r.side, t + self.pick_ttl, pre_pick_close,
+                        pick_scale, t)
                 # Drop expired picks
                 active_picks = {s: v for s, v in active_picks.items()
                                   if v[1] > t}
@@ -368,7 +378,14 @@ class StrategySimulator:
                 legs_now = positions.get(sym, [])
                 if sym not in active_picks:
                     continue
-                want, _expiry, anchor, pick_scale = active_picks[sym]
+                (want, _expiry, anchor, pick_scale,
+                  registered_at) = active_picks[sym]
+                # v3 C: cascade-test entry delay. Skip if we haven't
+                # waited enough bars since pick registration (entry-
+                # timing diagnostic measured 2× mean PnL by waiting
+                # 1 bar — Lo-MacKinlay 1990 short-horizon reversal).
+                if (t - registered_at) < p.cascade_entry_delay_bars:
+                    continue
                 # v2.2 cascade-test entry: continuation past the
                 # pre-pick anchor is the entry trigger. The screener
                 # already exhausted the false-positive budget at the
