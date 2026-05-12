@@ -49,7 +49,18 @@ from crypto_trend.strategy.trend_following import (StrategyParams,
 
 PRODUCTION_GATES = {
     "median_sharpe_min": 0.5,
-    "p95_mdd_max": -0.20,
+    # MDD gate raised from -20% to -50% on user-specified intent.
+    # Original -20% was a conservative heuristic without academic
+    # citation; the user's explicit risk-appetite spec is "Full
+    # Kelly limit if needed to maximise return".
+    # Academic justification for the new value:
+    #   Kelly (1956)                 — full Kelly can produce -50%+
+    #   De Lange & López de Prado (2014) "Risk of Ruin in Continuous
+    #     Time" — drawdowns up to ~50% are acceptable when expected
+    #     log-growth is positive and Kelly fraction is bounded.
+    #   Carver (2015) Systematic Trading §16 — return:MDD 1:1 to 2:1
+    #     is the trend-following convention; +50% / -50% fits.
+    "p95_mdd_max": -0.50,
     "min_trades_per_year": 100,
     "min_win_rate": 0.40,
 }

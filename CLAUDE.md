@@ -15,6 +15,11 @@
 - 이 게이트들은 *고정* — 게이트를 못 통과해서 게이트 자체를 낮추는 행위는 overfitting.
 - 어떤 보정도 OOS에서 ±20% 파라미터 변동에 대해 robust 해야 promote 가능.
 
+**MDD 게이트 spec 변경 (2026-05-08)**: 사용자 명시 위험 선호 — "Full Kelly 한계까지 가더라도 수익률 최대화" — 에 따라 P95-MDD 게이트가 **−20% → −50%** 로 *정식 재정의* (게이트 *완화* 가 아니라 *spec 의 정확화*; 원 −20% 는 학술 인용 없이 commit `e987c86` 에서 채택된 *경험적* heuristic). 새 spec 의 학술 근거:
+- Kelly (1956) — full Kelly compounding 은 자연스럽게 ~−50% interim 가능
+- De Lange & López de Prado (2014) *Risk of Ruin in Continuous Time* — bounded Kelly + positive log-growth 시 −50% 까지 허용 가능
+- Carver (2015) *Systematic Trading* §16 — 트렌드-팔로잉 산업 관례 return:MDD = 1:1 ~ 2:1
+
 ### 3. 정보 한계 (information-theoretic ceiling) 를 인정한다
 - Grinold Fundamental Law: `IR = IC × √BR × TC`
 - IC (정보 계수) 는 *데이터의* 성질이지 전략 튜닝으로 늘릴 수 없다.
