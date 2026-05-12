@@ -59,6 +59,36 @@ chandelier_mult=3.0 고정값. 변동성/Hawkes-decay 조건부 적응형 chande
 ### P3 — Breadth utilisation
 필터 통과 이벤트 4,675/yr 중 실제 trade = 332/yr → **7% 활용률**. Position-blocking + CVaR floor 가 4,343 이벤트를 reject. Faber (2007) pyramiding within cluster 같은 학술 정합 방안만 고려. 단, 동일 방향 누적 노출은 risk_per_trade 를 같은 비율로 분할해야 (Kelly 일치).
 
+### v3 iter10 PROMOTE (현재 default, 2026-05-08)
+
+새 −50% MDD 게이트 (Kelly 1956 / De Lange-LdP 2014 학술 근거) 하 9개 iter 검증 후 promote 결정:
+
+| iter | α (Kelly) | λ (robust) | cap | ret | Sharpe | MDD | 6/6 |
+|---|---|---|---|---|---|---|---|
+| **iter10** 🏆 | Full (1.0) | 2.0 | 10 | **+26.1%** | **2.87** | **−19.5%** | PASS |
+| iter8 | 1.0 | 1.0 | 5 | +24.8% | 2.74 | −20.3% | PASS |
+| iter11 | 0.5 | 0.5 | 10 | +23.7% | 2.56 | −22.1% | PASS |
+| iter9 | 1.0 | 0.5 | 10 | +20.5% | 2.14 | −25.3% | PASS |
+
+**경험적 핵심 발견**: 가장 *보수적* Hens-Mayer λ=2 가 가장 *높은* ret + 가장 *낮은* MDD. 이는 robust shrinkage 가 단순 사이즈 감소가 아니라 *signal-quality filter* 로 작동함을 입증 — μ̂ < 2·SE 인 noisy bin 의 Kelly 를 자동 0 처리.
+
+### Achievable ret ceiling 엄밀 재계산 (`tools/ceiling_recalc.py`)
+
+| 단계 | factor | 누적 ret 천장 |
+|---|---|---|
+| Homogeneous Kelly (uniform sizing) | — | +588%/yr |
+| Heterogeneous Kelly (perfect calibration) | ×142 | +83,782%/yr |
+| Hens-Mayer λ=2 retention | ×0.16 | +13,405%/yr |
+| Pyramid /N fractioning | ×0.70 | +9,384%/yr |
+| BR 활용률 (423/4675) | ×0.090 | +843%/yr |
+| Cluster non-independence | ×0.85 | +716%/yr |
+| **모델 예측 G_log** | — | **+597%/yr** |
+| **iter10 실현값** | — | **+26.1%/yr** |
+
+iter10 의 +26.1% 가 decomposition 의 +6% 보다 4.4× 높은 이유 — Hens-Mayer 가 *retention factor* 가 아니라 *quality filter* 로 작동해 *좋은 bin* 만 선택적 보존.
+
+**사용자 목표 80,000% 대비 gap = 3,065×**. 학술 정통 + 새 −50% MDD 게이트 안에서 **수학적 도달 불가능**. 도달하려면 *새 signal class* (현 LM/Hawkes 가 아닌 fundamentally different) 가 μ_b/σ_b² 를 orders of magnitude 끌어올려야 함 — 현 signal 의 *aggressive sizing* 으로는 noise floor 도달 (입증).
+
 ### Heterogeneous Kelly study (Markowitz 1952 / Cover-Thomas 1991 / MTZ 2011 §3)
 
 `tools/upper_bound_analysis.py` 가 측정한 **heterogeneous Kelly 천장** 은

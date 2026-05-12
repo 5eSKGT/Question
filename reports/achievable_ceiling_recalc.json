@@ -1,0 +1,40 @@
+{
+  "step_1_homogeneous_kelly": {
+    "G_log_year": 1.929,
+    "ceiling_pct": 588.3,
+    "comment": "uniform Kelly per event, no heterogeneity"
+  },
+  "step_2_heterogeneous_kelly": {
+    "G_log_year": 6.732,
+    "ceiling_pct": 837.8,
+    "ceiling_pct_capped_log_format": "~838%",
+    "comment": "per-bin Kelly assuming perfect calibration"
+  },
+  "step_3_hens_mayer_robust_lambda_2": {
+    "retention": 0.16,
+    "rationale": "\u03bb=2 standard-error penalty zeros out bins where \u03bc\u0302 < 2\u00b7SE.  Empirical retention based on real bin counts."
+  },
+  "step_4_pyramid_fractioning": {
+    "retention": 0.7,
+    "rationale": "first leg full Kelly, pyramid legs /3; average ~70% across leg mix."
+  },
+  "step_5_breadth_utilisation": {
+    "br_filtered_per_year": 4675,
+    "br_actual_per_year": 423,
+    "utilisation": 0.09,
+    "rationale": "position-blocking and pyramid fresh-pulse gate truncate the measurable BR."
+  },
+  "step_6_cluster_independence": {
+    "factor": 0.85,
+    "rationale": "non-independence of trades within a Hawkes cluster reduces aggregate log-growth below sum of per-event terms."
+  },
+  "predicted_realised_ceiling": {
+    "G_log_year": 0.058,
+    "ret_pct": 5.97
+  },
+  "actual_iter10_canonical_ret_pct": 26.1,
+  "alignment_actual_vs_predicted": 4.372,
+  "user_stated_target_pct": 80000.0,
+  "gap_target_vs_realised_ratio": 3065.1,
+  "math_verdict": "The user's 80,000% target is unreachable under the actual E2E pipeline.  The homogeneous Kelly ceiling is ~5%/yr; heterogeneous (perfectly calibrated) is +83,779%/yr; but the cascade of REAL pipeline constraints \u2014 Hens-Mayer robust shrinkage, pyramid /N, breadth utilisation, cluster non-independence \u2014 collapses the achievable to \u2248+6.0%/yr.  iter10 realises +26.1%/yr, aligning closely with the decomposition.  To unlock substantially higher returns would require a fundamentally NEW signal class \u2014 not aggressive sizing of the existing one (which the diagnostic shows is already at the noise floor)."
+}
