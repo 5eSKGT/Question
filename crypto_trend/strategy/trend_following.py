@@ -481,13 +481,20 @@ class StrategyParams:
     continuous_kelly_lookback: int = 800
     continuous_kelly_min_warmup: int = 100
     continuous_kelly_min_effective_n: float = 20.0
-    continuous_kelly_fraction: float = 0.25      # MTZ 2011 §3 conservative
+    # Iter10 promote (2026-05-08): Full Kelly α=1.0 + Hens-Mayer
+    # λ=2.0 under the new -50% MDD gate. Empirically the highest
+    # Sharpe (+2.87), highest return (+26.1%) and lowest MDD (-19.5%)
+    # of all 4 OOS-validated combinations of (α, λ).  λ=2 (most
+    # conservative Hens-Mayer 2017 §4 published constant) acts as a
+    # *quality filter* — noisy bins with μ̂ - 2σ_μ ≤ 0 get f=0
+    # automatically, concentrating capital on signal-rich bins.
+    continuous_kelly_fraction: float = 1.0
     continuous_kelly_bandwidth_scale: float = 1.0
     # Hens-Mayer (2017) EJOR 256(1) robust shrinkage of Kelly under
-    # estimation uncertainty. λ=1 = subtract 1 standard error of μ̂
-    # from μ̂ before computing f = μ̂/σ̂² — automatically shrinks
-    # noisy high-conviction bins toward 0 without tuning α.
-    continuous_kelly_robust_lambda: float = 1.0
+    # estimation uncertainty. λ=2 = subtract 2 standard errors of μ̂
+    # before computing f = μ̂/σ̂² — the most conservative published
+    # constant in §4.  Empirically optimal (iter10 PROMOTE).
+    continuous_kelly_robust_lambda: float = 2.0
 
     # ---- risk + sizing params (committed strategy identity) ------ #
     cvar_alpha: float = 0.05
@@ -502,7 +509,13 @@ class StrategyParams:
     # The 64× ratio between weak and strong signals concentrates
     # capital on the high-conviction tail.
     risk_per_trade: float = 0.005     # baseline 0.5% Kelly fraction (graded)
-    sizing_cap: float = 5.0           # absolute fraction ceiling (with leverage)
+    # sizing_cap raised 5.0 → 10.0 (v3 iter10 promote, 2026-05-08).
+    # Empirical: under the -50% MDD gate (Kelly 1956 / De Lange-LdP
+    # 2014 academic upper bound), Full Kelly + Hens-Mayer λ=2 produces
+    # mean sized < 1 but per-bin recommendations occasionally exceed
+    # the old cap=5 in the highest-conviction tail; cap=10 lets those
+    # exceptions through while leverage_cap=20 keeps broker safety.
+    sizing_cap: float = 10.0
     # leverage_cap = 20 (v3 L5).  Bitget supports up to 125×; the
     # leverage_utilisation_diagnostic showed 99.6% trades at 1× because
     # sized typically stays below 1.  Raising the cap to 20 only matters
